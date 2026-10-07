@@ -11,6 +11,7 @@ Workflow:
            - Similar fingerprints and similar scaffold
         - Investigate activity IC50 values of known ligands to investigate motives
     - Pharmacophoric modeling through https://pharmit.csb.pitt.edu/search.html
+    - Mutagenisis binding
 
 2. Machine Learning
     - 

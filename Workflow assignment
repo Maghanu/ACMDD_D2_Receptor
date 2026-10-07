@@ -8,7 +8,8 @@ Workflow:
             - Na+ binding Asp46
     - Using talktorial exercises investigate known D2 ligands
         - Investigate similar molecules to known ligands
-        - Similar fingerprints and similar scaffold
+           - Similar fingerprints and similar scaffold
+        - Investigate activity IC50 values of known ligands to investigate motives
     - Pharmacophoric modeling through https://pharmit.csb.pitt.edu/search.html
 
 2. Machine Learning

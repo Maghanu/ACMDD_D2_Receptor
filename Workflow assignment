@@ -1,8 +1,18 @@
 Workflow:
 
 1. Gather potential ligands
+    - Learn about D2 receptor
+        - Binding pockets
+        - Orthosteric
+        - Allosteric
+            - Na+ binding Asp46
     - Using talktorial exercises investigate known D2 ligands
         - Investigate similar molecules to known ligands
         - Similar fingerprints and similar scaffold
     - Pharmacophoric modeling through https://pharmit.csb.pitt.edu/search.html
+
+2. Machine Learning
+    - 
+
+3. Exclusion of D3/D4 binding ligands
 

@@ -1,22 +1,26 @@
 Workflow:
 
-1. Gather potential ligands
+1. Gather potential ligands to CHEMBL217
     - Learn about D2 receptor
         - Binding pockets
         - Orthosteric
         - Allosteric
             - Na+ binding Asp46
+        - We want to find select a new anatagonist for D2 receptor
     - Using talktorial exercises investigate known D2 ligands
         - Investigate similar molecules to known ligands
            - Similar fingerprints and similar scaffold
+                - Compare structure of agonists and antagonists
         - Investigate activity IC50 values of known ligands to investigate motives
     - Pharmacophoric modeling through https://pharmit.csb.pitt.edu/search.html
-    - Mutagenisis binding
 
 2. Machine Learning
-    - 
+    - Take all the known antagonists
+    - Reduce their molecular features to fingerprints
+    - Create test data and confirmation data
+    - Make the model predict unknown IC50 values for unexplored ligands with similar scaffolds as known antagonists
 
 3. Exclusion of D3/D4 binding ligands
 
-testrrjjjjfffrtrtrt
+
 

@@ -6,12 +6,14 @@ Part 1  ChEMBL: binding activities, curation, descriptors, scaffolds, action typ
 Part 2  PDB:    residue-level interactions (PLIP), BW numbering (GPCRdb),
                 PDB ligand -> ChEMBL link, interaction frequency by ligand class.
 
-Install:
-    pip install chembl_webresource_client rdkit pandas numpy matplotlib requests plip
-    (PLIP needs Open Babel: conda install -c conda-forge openbabel)
+Install (in a virtual environment):
+    python3 -m venv .venv
+    .venv/bin/pip install -r requirements.txt
+    .venv/bin/pip install --no-deps plip
+    (PLIP needs Open Babel; requirements.txt uses the prebuilt openbabel-wheel)
 
 Usage:
-    python d2_interaction_analysis.py
+    .venv/bin/python CHEMBL_DRUG_D2.py
 Outputs are written to ./d2_analysis/
 """
 
@@ -142,8 +144,9 @@ def part1_chembl():
     annotated = cpd[cpd.action_type != "UNANNOTATED"]
     groups = sorted(annotated.action_type.unique())
     for a, col in zip(ax[1:], ["MW", "logP"]):
-        a.boxplot([annotated.loc[annotated.action_type == g, col] for g in groups],
-                  labels=groups)
+        a.boxplot([annotated.loc[annotated.action_type == g, col] for g in groups])
+        a.set_xticks(range(1, len(groups) + 1))
+        a.set_xticklabels(groups)
         a.set_ylabel(col)
         a.tick_params(axis="x", rotation=45)
     fig.tight_layout()

@@ -1,8 +1,0 @@
-chembl_webresource_client
-rdkit
-pandas
-numpy
-matplotlib
-requests
-lxml
-openbabel-wheel

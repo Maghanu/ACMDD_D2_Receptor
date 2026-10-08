@@ -13,12 +13,17 @@ Workflow:
                 - Compare structure of agonists and antagonists
         - Investigate activity IC50 values of known ligands to investigate motives
     - Pharmacophoric modeling through https://pharmit.csb.pitt.edu/search.html
+    - How similar are the molecules
+    
 
 2. Machine Learning
     - Take all the known antagonists
     - Reduce their molecular features to fingerprints
     - Create test data and confirmation data
     - Make the model predict unknown IC50 values for unexplored ligands with similar scaffolds as known antagonists
+    - Also look at Kd values 
+    - What is difference in scaffold molecules of poor binding compared to high binding
+
 
 3. Exclusion of D3/D4 binding ligands
 

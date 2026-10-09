@@ -1,0 +1,12 @@
+- Work points for session 9/10/2026
+    - Organize GitHub Repository
+        - Merge files into maps
+        - Add and update readme 
+        - Change files to juypter .ipynb to homogenize repository
+    - Execute most common scaffold to identify important substructures
+        - Identify if high pIC50 has different scaffold compared to low pIC50
+    - Find dataset to run model on to find new molecules
+    - Gather everything to look at pCHEMBL value
+        - pCHEMBL value is a conversion
+    - Define a clear goal
+    - Start introduction of paper

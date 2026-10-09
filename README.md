@@ -18,6 +18,30 @@ Many clinically used antipsychotic and dopaminergic drugs act on DRD2, highlight
 
 The aim of this project is to investigate the D2 dopamine receptor as a therapeutic target using computational drug discovery approaches. Specifically, the project focuses on identifying and evaluating small molecules that may interact with DRD2 and potentially influence dopaminergic signaling in a therapeutic manner.
 
+## Repository organization
+
+The project is organized into a clear workflow structure so that data, analysis scripts, notebooks, and results are easy to find and maintain.
+
+- `data/` — raw compound datasets and curated DRD2 activity tables
+- `src/` — reproducible Python workflow scripts for preprocessing, fingerprinting, and modeling
+- `notebooks/` — exploratory and tutorial-style Jupyter notebooks
+- `results/` — generated model outputs, metrics tables, and plots
+- `Workflow_steps/` — legacy workflow files kept for reference while the organized structure is used going forward
+
+## Quick start
+
+1. Install the project dependencies:
+   - `pip install -r requirements.txt`
+2. Prepare the combined compound dataset:
+   - `python src/step1_ic50_kd.py`
+3. Generate fingerprints:
+   - `python src/step2_convert_to_fingerprint.py`
+4. Run the classification and regression models:
+   - `python src/step2_machine_learning.py`
+   - `python src/step2_machine_learning_pic50.py`
+5. Explore scaffold similarity analyses:
+   - `python src/step3_similar_scaffold.py`
+
 ## Project goals
 
 The main goals of the project are to:

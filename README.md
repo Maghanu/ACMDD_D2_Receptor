@@ -16,7 +16,7 @@ Many clinically used antipsychotic and dopaminergic drugs act on DRD2, highlight
 
 ## Aim of the project
 
-The aim of this project is to investigate the D2 dopamine receptor as a therapeutic target using computational drug discovery approaches. Specifically, the project focuses on identifying and evaluating small molecules that may interact with DRD2 and potentially influence dopaminergic signaling in a therapeutic manner.
+The aim of this project is to investigate the D2 dopamine receptor as a therapeutic target using computational drug discovery approaches. Specifically, the project focuses on identifying and evaluating small molecules that may interact with DRD2 and have a higher activity than current antagonists that influence dopaminergic signaling in a therapeutic manner. 
 
 ## Project goals
 

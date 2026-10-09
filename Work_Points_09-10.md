@@ -14,3 +14,8 @@
         - 9BS9	LSD (per the paper)	Active, with miniGαoA	Cryo-EM	2.28 Å (local refinement)	Jain et al. 2025
             - """Can't find the Electron Map, even with the download tip"""
         - 6CM4 Risperidone (antagonist/inverse agonist)	Inactive	X-ray	2.87 Å	Wang 2018
+    - Docking algorithm Vina
+        - Solo runs have no comparitive power
+        - Combiniation runs do, so always combine runs if you want to compare between kcal/mol affinity
+        - Try dopamine
+        - Try Risperidone to go back into the DRD2

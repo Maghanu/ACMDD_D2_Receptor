@@ -1,10 +1,30 @@
-# DRD2 docking
+# DRD2 docking for candidate prioritization
+
+## How docking fits the project
+
+The primary activity labels in this project are experimental DRD2 measurements
+such as IC50-derived pIC50. Ligand-based ML models are trained on those known
+experimental molecules. The longer-term goal is to apply a validated model to
+candidate molecules represented as SMILES, prioritize candidates for further
+investigation, and use docking as a structural follow-up before in vitro
+testing.
+
+Docking does not establish experimental binding or target selectivity. Vina
+scores are approximate scoring-function outputs, not measured affinities, and
+must not be used as substitutes for experimental training labels. The example
+SMILES in `docking/examples/drd2/` are workflow inputs; their presence here
+does not assert that they are experimentally confirmed DRD2 ligands.
+
+The current docking script accepts one `.smi`, `.sdf`, or `.mol` ligand per
+run. Model-to-SMILES-library screening and automated candidate ranking are
+future integration steps; they are not currently performed by the docking
+script.
+
+## Environment
 
 AutoDock Vina's Python bindings are not supported on native Windows. On
-Windows, run this workflow in Ubuntu under WSL. Install Miniforge in Ubuntu;
-do not try to activate a Python virtual environment stored on `/mnt/c`.
-
-From the Ubuntu terminal:
+Windows, run the workflow in Ubuntu under WSL. Install Miniforge inside
+Ubuntu, not into a Windows Python environment. From the Ubuntu terminal:
 
 ```bash
 cd ~
@@ -14,50 +34,81 @@ source ~/miniforge3/etc/profile.d/conda.sh
 conda create -n drd2-vina -c conda-forge python=3.11 vina meeko rdkit biopython pdbfixer openmm matplotlib -y
 conda activate drd2-vina
 cd "/mnt/c/Users/manup/Documents/Leiden Universiteit/LUMC/Advanced Computational Methods in Drug Discovery/Mini-Research/ACMDD_D2_Receptor"
+```
+
+For later terminal sessions, activate the environment and return to the
+repository root:
+
+```bash
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate drd2-vina
+cd "/mnt/c/Users/manup/Documents/Leiden Universiteit/LUMC/Advanced Computational Methods in Drug Discovery/Mini-Research/ACMDD_D2_Receptor"
+```
+
+Install Vina from conda-forge rather than pip; pip may try to build it from
+source. The environment belongs in Ubuntu's home directory. The repository can
+remain on the Windows-mounted drive.
+
+## Dock one experimental or candidate molecule
+
+Provide a SMILES string in a `.smi` file (one molecule per file for this
+workflow), or an `.sdf`/`.mol` file. Prefer correctly standardized structures
+and appropriate protonation/tautomer states for the assay context. For example:
+
+```bash
 python vina_autodock.py
 ```
 
-Install Vina using conda-forge, not pip: pip may try to compile it from source
-and fail if Boost development libraries are unavailable. The conda environment
-is located in Ubuntu's home directory; the project files can remain on the
-Windows drive.
+When prompted, enter a path such as
+`docking/examples/drd2/ligand.smi`. The script downloads RCSB PDB 6CM4,
+derives the docking box from co-crystallized risperidone, repairs and
+minimizes the receptor, prepares the ligand, and runs Vina.
 
-When prompted, enter the ligand file path. Supported inputs are `.sdf`, `.mol`,
-and `.smi` (a SMILES string on the first line). The script downloads PDB 6CM4,
-repairs missing receptor atoms with PDBFixer, performs a restrained OpenMM
-minimization, prepares receptor and ligand PDBQT files, and centers the search
-box on co-crystallized risperidone. It also corrects anomalous terminal-oxygen
-coordinates before Meeko validates the receptor.
+The prepared DRD2 receptor and docking box are cached in
+`docking/prepared/6CM4/` and reused for every ligand. Per-ligand run folders
+receive copies of the shared receptor files, allowing candidates to be
+compared against identical receptor coordinates and box settings. Remove that
+cache only when deliberately rebuilding the shared receptor; after doing so,
+redock all candidates being compared. Vina's search can still vary, so consider
+repeated runs or a more systematic protocol when ranking close candidates.
 
-For salt inputs with one carbon-containing component and separate non-carbon
-ions, the docking workflow ignores those ions and reports which ligand
-component it uses. Inputs with multiple carbon-containing components are
-rejected rather than choosing a ligand automatically.
+Salt inputs with exactly one carbon-containing component have disconnected
+non-carbon ions removed with a warning. Multiple carbon-containing components
+are rejected rather than guessed. Inspect protonation, stereochemistry, and
+the resulting pose.
 
-Outputs are saved under `docking/runs/<ligand-file-name>/`. Docking scores are
-computational estimates, not experimental binding affinities. Inspect poses
-before interpreting them. PDB 1IEP is Abl kinase, not DRD2.
+Outputs are stored under `docking/runs/<ligand-file-name>/`, including
+`docked_poses.pdbqt`, `vina.log`, and prepared receptor/ligand files. Treat the
+scores as a computational prioritization signal only. Check pose plausibility,
+compare against appropriate known ligands and controls, and experimentally
+test promising candidates in vitro.
 
-The minimization holds crystallographic heavy atoms close to their input
-positions while allowing rebuilt atoms to relax and resolve severe clashes.
+## Visualize docking results
 
-To visualize the best-ranked pose, nearby receptor atoms, polar contacts, and
-the scores for all poses, run:
+Run the plotter and enter the run name (the ligand filename without its
+extension):
 
 ```bash
 python docking/plot_docking.py
 ```
 
-The plot is saved as `docking/runs/ligand/visualization.png`. Use
-`--run-dir docking/runs/<ligand-file-name>` to plot another docking run.
-
-For an interactive 3D view with crystallographic DRD2 helices, the docked
-ligand, pocket residues, and close polar contacts, run:
+It generates both `visualization.png` and `visualization_3d.html` in that
+ligand's run directory. For example, entering `ligand` creates them under
+`docking/runs/ligand/`. The HTML uses 3Dmol.js from its public CDN and requires
+an internet connection. Open it in a browser, or from WSL run:
 
 ```bash
-python docking/visualize_docking_3d.py
+explorer.exe "$(wslpath -w docking/runs/ligand/visualization_3d.html)"
 ```
 
-Open `docking/runs/ligand/visualization_3d.html` in a browser with internet
-access (the viewer loads 3Dmol.js from its public CDN). Drag to rotate, scroll
-to zoom, and use **Focus pocket** to recenter the view.
+The 3D view shows crystallographic DRD2 helices, the docked pose, nearby
+pocket residues, and close N/O contacts. These distance markers are not a
+complete hydrogen-bond analysis.
+
+## Scientific validation
+
+PDB 6CM4 is DRD2 with co-crystallized risperidone. A useful workflow control is
+to redock the native ligand and compare the predicted pose with its
+crystallographic pose. This checks aspects of the docking setup but does not
+validate predicted potency for new molecules. Ultimately, experimental
+measurements determine whether a prioritized candidate is active.

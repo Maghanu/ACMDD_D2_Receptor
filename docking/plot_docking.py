@@ -8,7 +8,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RUN_DIR = ROOT / "docking" / "runs" / "ligand"
+RUNS_DIR = ROOT / "docking" / "runs"
+DEFAULT_RUN_DIR = RUNS_DIR / "ligand"
 ELEMENT_COLORS = {
     "C": "#59636e",
     "N": "#3977b8",
@@ -346,19 +347,60 @@ def main() -> int:
         description="Plot the top Vina pose and its receptor-pocket contacts."
     )
     parser.add_argument(
-        "--run-dir",
-        type=Path,
-        default=DEFAULT_RUN_DIR,
-        help=f"folder containing docking output files (default: {DEFAULT_RUN_DIR})",
+        "ligand_name",
+        nargs="?",
+        help="name of the ligand docking run under docking/runs/",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        help="output image path (default: <run-dir>/visualization.png)",
+        help="output image path (default: docking/runs/<ligand-name>/visualization.png)",
     )
     args = parser.parse_args()
-    output_path = args.output or args.run_dir / "visualization.png"
-    make_plot(args.run_dir.resolve(), output_path.expanduser().resolve())
+    required_files = (
+        "docked_poses.pdbqt",
+        "drd2.pdbqt",
+        "ligand_3d.sdf",
+        "6CM4.cif",
+        "drd2_repaired.pdb",
+    )
+    prompted = args.ligand_name is None
+    while True:
+        ligand_name = args.ligand_name
+        if prompted:
+            ligand_name = input(
+                "What ligand do you want to visualise? "
+            ).strip()
+        if not ligand_name:
+            reason = "a ligand name is required"
+        elif Path(ligand_name).name != ligand_name or ligand_name in {".", ".."}:
+            reason = "enter a ligand run name, not a path"
+        else:
+            run_dir = RUNS_DIR / ligand_name
+            missing_files = [
+                filename for filename in required_files
+                if not (run_dir / filename).is_file()
+            ]
+            if not missing_files:
+                break
+            reason = (
+                f"no complete docking run found for {ligand_name!r}; "
+                f"missing: {', '.join(missing_files)}"
+            )
+
+        if not prompted:
+            parser.error(reason)
+        print(f"Invalid ligand: {reason}. Please try again.")
+
+    output_path = args.output or run_dir / "visualization.png"
+    run_dir = run_dir.resolve()
+    make_plot(run_dir, output_path.expanduser().resolve())
+
+    from visualize_docking_3d import build_html
+
+    html_path = run_dir / "visualization_3d.html"
+    html_path.write_text(build_html(run_dir), encoding="utf-8")
+    print(f"Saved interactive 3D visualization to: {html_path}")
     return 0
 
 

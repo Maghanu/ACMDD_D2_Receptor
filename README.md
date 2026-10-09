@@ -1,88 +1,75 @@
-# D2 Dopamine Receptor Computational Drug Discovery Project
+# DRD2 ligand discovery: experimental data, machine learning, and docking
 
-## Biological background
+## Project purpose
 
-The dopamine D2 receptor (DRD2) is a G-protein-coupled receptor (GPCR) that plays a central role in the brain's dopaminergic signaling pathways. It is primarily expressed in the striatum and is involved in regulating movement, motivation, reward processing, cognition, and endocrine function. Dopamine binding to DRD2 modulates intracellular signaling through Gi/o proteins, influencing neuronal activity and neurotransmitter release.
+This project uses experimentally measured dopamine D2 receptor (DRD2) activity
+to train and evaluate ligand-based machine-learning models. The longer-term
+goal is to use those models to prioritize candidate molecules represented as
+SMILES, then investigate promising candidates further with structure-based
+docking and ultimately in vitro experiments.
 
-Because DRD2 is involved in multiple neurological and psychiatric processes, it is also a major therapeutic target. Dysregulation of dopamine signaling at the D2 receptor is associated with several disorders, including:
+The current ML workflow is based on measured DRD2 `pIC50` data. It trains
+classification models for an activity threshold and regression models for
+`pIC50`. The Kd measurements are curated and combined separately for
+comparison; they are not currently used as labels by the ML scripts. Docking
+is a complementary prioritization tool, not an experimental measurement and
+not proof that a compound binds DRD2.
 
-- Schizophrenia and other psychotic disorders
-- Parkinson's disease
-- Bipolar disorder
-- Hyperprolactinemia
-- Drug-induced movement disorders
+## Repository layout
 
-Many clinically used antipsychotic and dopaminergic drugs act on DRD2, highlighting the receptor as an important point of intervention in drug discovery. In medicinal chemistry and computational pharmacology, DRD2 is therefore a valuable target for identifying novel compounds with improved potency, selectivity, and safety profiles.
+- `data/` — experimental activity tables and derived molecular fingerprints
+- `src/` — data preparation, fingerprinting, ML evaluation, and scaffold
+  analysis scripts
+- `notebooks/` — exploratory and tutorial-style analyses
+- `results/` — outputs from the current ML scripts
+- `docking/` — shared-receptor Vina workflow, example SMILES, and per-ligand
+  docking outputs
+- `Workflow_steps/` — earlier workflow materials retained for reference
 
-## Aim of the project
+## ML workflow
 
-The aim of this project is to investigate the D2 dopamine receptor as a therapeutic target using computational drug discovery approaches. Specifically, the project focuses on identifying and evaluating small molecules that may interact with DRD2 and have a higher activity than current antagonists that influence dopaminergic signaling in a therapeutic manner. 
-
-## Repository organization
-
-The project is organized into a clear workflow structure so that data, analysis scripts, notebooks, and results are easy to find and maintain.
-
-- `data/` — raw compound datasets and curated DRD2 activity tables
-- `src/` — reproducible Python workflow scripts for preprocessing, fingerprinting, and modeling
-- `notebooks/` — exploratory and tutorial-style Jupyter notebooks
-- `results/` — generated model outputs, metrics tables, and plots
-- `Workflow_steps/` — legacy workflow files kept for reference while the organized structure is used going forward
-
-## Quick start
-
-1. Install the project dependencies:
-   - `pip install -r requirements.txt`
-2. Prepare the combined compound dataset:
-   - `python src/step1_ic50_kd.py`
-3. Generate fingerprints:
-   - `python src/step2_convert_to_fingerprint.py`
-4. Run the classification and regression models:
-   - `python src/step2_machine_learning.py`
-   - `python src/step2_machine_learning_pic50.py`
-5. Explore scaffold similarity analyses:
-   - `python src/step3_similar_scaffold.py`
-
-## Molecular docking setup
-
-The Vina Python bindings used by this script are supported on Linux and macOS,
-not native Windows. On Windows, run the script in Ubuntu under WSL. From
-PowerShell, install Ubuntu if WSL is not already set up:
-
-```powershell
-wsl --install -d Ubuntu
-```
-
-After Ubuntu is installed, open the Ubuntu terminal. Install Miniforge inside
-Ubuntu (not the Windows Miniconda installation). In the commands below, accept
-the installer defaults and allow it to initialize the shell:
+Run these commands from the repository root in an environment with the
+dependencies in `requirements.txt` installed:
 
 ```bash
-cd ~
-curl -L -o Miniforge3.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
-bash Miniforge3.sh
-source ~/miniforge3/etc/profile.d/conda.sh
-conda create -n drd2-vina -c conda-forge python=3.11 vina meeko rdkit biopython pdbfixer openmm matplotlib -y
-conda activate drd2-vina
-cd "/mnt/c/Users/manup/Documents/Leiden Universiteit/LUMC/Advanced Computational Methods in Drug Discovery/Mini-Research/ACMDD_D2_Receptor"
-python vina_autodock.py
+python src/step1_ic50_kd.py
+python src/step2_convert_to_fingerprint.py
+python src/step2_machine_learning.py
+python src/step2_machine_learning_pic50.py
+python src/step3_similar_scaffold.py
 ```
 
-The environment is created under Ubuntu's home directory, rather than on the
-Windows-mounted project drive. This avoids WSL permission issues with virtual
-environment activation. Install Vina through conda-forge rather than pip to
-avoid trying to compile it from source.
+The classification workflow labels the experimentally measured IC50 compounds
+using the `pIC50 >= 6.3` cutoff. The regression workflow predicts measured
+`pIC50`. Both use MACCS, Morgan radius 2, and Morgan radius 3 fingerprints.
+Model outputs are written to `results/`.
 
-When prompted, enter a ligand file path (`.sdf`, `.mol`, or `.smi`). The script downloads the DRD2 structure from RCSB PDB entry 6CM4, prepares the receptor and ligand, derives the docking box from the co-crystallized risperidone, and writes poses and a log under `docking/runs/`. See [docking/README.md](./docking/README.md) for scope and caveats.
+The current scripts train and evaluate models on known compounds; they do not
+generate new molecules or automatically score an external SMILES library.
+Applying a trained model to candidate SMILES and selecting compounds for
+follow-up is a future screening step. Keep candidate structures and their
+predictions traceable to their source and do not treat predictions as
+experimental activity.
 
-## Project goals
+## Docking workflow
 
-The main goals of the project are to:
+Docking provides a structural follow-up for selected molecules. The Vina
+workflow accepts `.smi`, `.sdf`, or `.mol` input, prepares each ligand against
+a shared prepared DRD2 receptor, and writes poses and visualizations under
+`docking/runs/<ligand-name>/`. On Windows, run Vina in Ubuntu under WSL; setup
+and usage are documented in [docking/README.md](./docking/README.md).
 
-1. Retrieve and analyze biological activity data for DRD2 from public chemical databases such as ChEMBL.
-2. Explore the relationship between chemical structure and receptor activity using quantitative structure-activity relationship (QSAR) and ligand-based analysis.
-3. Identify compounds with promising binding affinity and potential pharmacological relevance.
-4. Develop a reproducible computational workflow for virtual screening and hit prioritization.
-5. Gain insight into the structural and physicochemical features associated with active DRD2 ligands.
-6. Support the rational design of future compounds with improved selectivity and therapeutic potential.
+Docking scores are approximate scoring-function outputs. They are useful, at
+most, as one piece of evidence when prioritizing model-selected candidates.
+Compare candidates using the same receptor, box, and settings; inspect the
+poses and ligand preparation; then use experimental testing to establish
+activity. Existing example SMILES are for workflow testing unless their
+experimental DRD2 activity is explicitly documented.
 
-Through this work, the project combines molecular biology, medicinal chemistry, and computational methods to better understand how ligand structure influences D2 receptor activity and how this knowledge can be used in drug discovery.
+## Biological context
+
+DRD2 is a G-protein-coupled receptor involved in dopaminergic signaling and an
+important target in several neurological and psychiatric disorders. Its
+pharmacology is complex, and measured activity depends on assay conditions,
+endpoint, and ligand context. The project therefore retains the distinction
+between experimental measurements, ML predictions, and docking scores.

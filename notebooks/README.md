@@ -1,13 +1,18 @@
-# Notebooks directory
+# Exploratory notebooks
 
-This folder contains exploratory Jupyter notebooks that document the workflow and reproduce analysis steps used in the project.
+These notebooks support interactive exploration and documentation of the
+experimental DRD2 activity workflow.
 
-## Included notebooks
+## Notebooks
 
-- `step1_ic50.ipynb` — IC50 data retrieval and exploration
+- `step1_ic50.ipynb` — IC50/pIC50 data retrieval and exploration
 - `step1_kd.ipynb` — Kd data retrieval and exploration
-- `step3_similar_scaffold.ipynb` — scaffold similarity and MCS analysis
+- `step3_similar_scaffold.ipynb` — scaffold similarity and maximum common
+  substructure analysis
 
-## Purpose
-
-These notebooks are intended for interactive exploration, teaching, and transparent workflow documentation. For reproducible automation, prefer the scripts in `src/`.
+The project uses experimentally measured compounds and assay endpoints as the
+basis for its current ML work. Preserve endpoint and provenance information:
+IC50-derived pIC50 and Kd are not interchangeable labels. For reproducible
+preprocessing and model evaluation, use the scripts in `../src/`; future
+screening of model-prioritized SMILES and docking are separate follow-up steps,
+not experimental measurements.

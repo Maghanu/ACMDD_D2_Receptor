@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 RUN_DIR = ROOT / "docking" / "runs"
 PDB_ID = "6CM4"
+SHARED_RECEPTOR_DIR = ROOT / "docking" / "prepared" / PDB_ID
 PDB_URL = f"https://files.rcsb.org/download/{PDB_ID}.cif"
 RISPERIDONE_COMPONENT_ID = "8NU"
 
@@ -277,6 +278,34 @@ def repair_missing_atoms(receptor_pdb: Path, repaired_pdb: Path) -> None:
         print(f"Corrected anomalous terminal oxygen geometry in {corrected} residue(s).")
 
 
+def prepare_shared_receptor(tools: dict[str, str]) -> tuple[list[float], list[float]]:
+    structure_path = SHARED_RECEPTOR_DIR / f"{PDB_ID}.cif"
+    receptor_pdb = SHARED_RECEPTOR_DIR / "drd2_clean.pdb"
+    repaired_receptor_pdb = SHARED_RECEPTOR_DIR / "drd2_repaired.pdb"
+    receptor_pdbqt = SHARED_RECEPTOR_DIR / "drd2.pdbqt"
+
+    download_structure(structure_path)
+    center, size = make_receptor_and_box(structure_path, receptor_pdb)
+    if all(path.is_file() for path in (repaired_receptor_pdb, receptor_pdbqt)):
+        print(f"Reusing shared prepared receptor: {receptor_pdbqt}")
+        return center, size
+
+    print("Preparing shared DRD2 receptor for ligand screening...")
+    repair_missing_atoms(receptor_pdb, repaired_receptor_pdb)
+    run_preparation(
+        [
+            tools["mk_prepare_receptor.py"],
+            "--read_pdb", str(repaired_receptor_pdb),
+            "--write_pdbqt", str(receptor_pdbqt),
+            "--box_center", *(f"{value:.3f}" for value in center),
+            "--box_size", *(f"{value:.3f}" for value in size),
+            "--delete_bad_res_from_box_radius", "8",
+        ],
+        "shared DRD2 receptor",
+    )
+    return center, size
+
+
 def minimize_repaired_receptor(
     receptor_pdb: Path,
     repaired_pdb: Path,
@@ -427,9 +456,16 @@ def create_ligand_sdf(source_path: Path, sdf_path: Path) -> None:
     elif suffix == ".mol":
         molecule = Chem.MolFromMolFile(str(source_path), removeHs=False)
     elif suffix in (".smi", ".smiles", ".txt"):
-        smiles = source_path.read_text(encoding="utf-8").strip().split()
-        if smiles:
-            molecule = Chem.MolFromSmiles(smiles[0])
+        smiles_tokens = source_path.read_text(encoding="utf-8-sig").strip().split()
+        if not smiles_tokens:
+            raise ValueError(f"No SMILES string found in {source_path}.")
+        molecule = Chem.MolFromSmiles(smiles_tokens[0])
+        if molecule is None:
+            raise ValueError(
+                f"Could not parse SMILES token {smiles_tokens[0]!r} from "
+                f"{source_path}. Check the file contents and remove any "
+                "unsupported characters."
+            )
     else:
         raise ValueError("Use a ligand file ending in .sdf, .mol, .smi, .smiles, or .txt.")
 
@@ -511,7 +547,7 @@ def main() -> int:
         ).strip().strip('"')
         if not raw_path:
             raise ValueError("No ligand file was provided.")
-        ligand_source = Path(raw_path).expanduser().resolve()
+        ligand_source = Path(raw_path.replace("\\", "/")).expanduser().resolve()
         if not ligand_source.is_file():
             raise FileNotFoundError(f"Ligand file not found: {ligand_source}")
 
@@ -519,31 +555,20 @@ def main() -> int:
         run_dir = RUN_DIR / run_name
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        structure_path = run_dir / f"{PDB_ID}.cif"
-        receptor_pdb = run_dir / "drd2_clean.pdb"
-        repaired_receptor_pdb = run_dir / "drd2_repaired.pdb"
+        center, size = prepare_shared_receptor(tools)
+        for filename in (
+            f"{PDB_ID}.cif",
+            "drd2_clean.pdb",
+            "drd2_repaired.pdb",
+            "drd2.pdbqt",
+        ):
+            shutil.copyfile(SHARED_RECEPTOR_DIR / filename, run_dir / filename)
+
         receptor_pdbqt = run_dir / "drd2.pdbqt"
         ligand_sdf = run_dir / "ligand_3d.sdf"
         ligand_pdbqt = run_dir / "ligand.pdbqt"
         output_path = run_dir / "docked_poses.pdbqt"
         log_path = run_dir / "vina.log"
-
-        download_structure(structure_path)
-        center, size = make_receptor_and_box(structure_path, receptor_pdb)
-        print("Repairing missing receptor atoms...")
-        repair_missing_atoms(receptor_pdb, repaired_receptor_pdb)
-        print("Preparing the repaired DRD2 receptor and its binding-site box...")
-        run_preparation(
-            [
-                tools["mk_prepare_receptor.py"],
-                "--read_pdb", str(repaired_receptor_pdb),
-                "--write_pdbqt", str(receptor_pdbqt),
-                "--box_center", *(f"{value:.3f}" for value in center),
-                "--box_size", *(f"{value:.3f}" for value in size),
-                "--delete_bad_res_from_box_radius", "8",
-            ],
-            "DRD2 receptor",
-        )
 
         create_ligand_sdf(ligand_source, ligand_sdf)
         run_preparation(

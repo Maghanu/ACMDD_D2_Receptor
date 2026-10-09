@@ -1,24 +1,77 @@
-# DRD2 docking for candidate prioritization
+# DRD2 docking for ML-prioritized candidate investigation
 
-## How docking fits the project
+## Scientific purpose
 
-The primary activity labels in this project are experimental DRD2 measurements
-such as IC50-derived pIC50. Ligand-based ML models are trained on those known
-experimental molecules. The longer-term goal is to apply a validated model to
-candidate molecules represented as SMILES, prioritize candidates for further
-investigation, and use docking as a structural follow-up before in vitro
-testing.
+This docking workflow is intended as a **structure-based follow-up** to the
+project's ligand-based machine-learning (ML) stage. The ML models learn from
+known compounds with experimentally measured DRD2 activity, currently using
+IC50-derived pIC50 values. In the eventual screening workflow, those models
+will be applied to molecules without known DRD2 measurements, represented as
+SMILES, to identify candidates worth further investigation.
 
-Docking does not establish experimental binding or target selectivity. Vina
-scores are approximate scoring-function outputs, not measured affinities, and
-must not be used as substitutes for experimental training labels. The example
-SMILES in `docking/examples/drd2/` are workflow inputs; their presence here
-does not assert that they are experimentally confirmed DRD2 ligands.
+Docking provides a complementary question: **can a candidate adopt a
+chemically plausible pose in the DRD2 binding pocket, and are its predicted
+contacts consistent with the known binding site?** It can help inspect and
+triage ML-prioritized structures before committing resources to experimental
+testing. It does not confirm binding, predict selectivity, or replace an
+in-vitro assay.
 
-The current docking script accepts one `.smi`, `.sdf`, or `.mol` ligand per
-run. Model-to-SMILES-library screening and automated candidate ranking are
-future integration steps; they are not currently performed by the docking
-script.
+The two computational stages estimate different things. The ML stage predicts
+an activity endpoint from patterns in known active compounds; Vina searches
+for poses in a prepared receptor and assigns an approximate score using its
+scoring function. A Vina score in kcal/mol is **not an experimentally measured
+binding free energy or affinity**, and should not be directly combined
+arithmetically with a predicted pIC50. A favorable docking score alone is not
+evidence that an otherwise unprioritized compound is a DRD2 hit.
+
+## Intended ML-to-docking-to-experiment workflow
+
+1. **Train and evaluate the ML model** using curated, experimentally measured
+   DRD2 compounds. Keep assay endpoint, source, units, and structure
+   standardization traceable.
+2. **Score candidate SMILES** with a validated model. The candidate set should
+   be clearly separated from the experimental training data; predicted values
+   must not be written back as if they were measured activity.
+3. **Select candidates for structural follow-up.** Consider ML score,
+   prediction confidence/applicability domain, chemical diversity, and
+   practical feasibility rather than selecting on a single score alone.
+4. **Prepare and dock candidate structures** using the same receptor, binding
+   box, protonation/tautomer policy, and Vina settings. Review poses and
+   receptor interactions for chemical plausibility; do not rank compounds by
+   small score differences without checking pose quality and search stability.
+5. **Prioritize a manageable set for in-vitro testing.** Experimental DRD2
+   measurements determine whether a candidate is active and provide new
+   evidence for later model improvement.
+
+The current scripts implement docking of **one supplied ligand per run**.
+They do not yet read ML predictions, screen a SMILES library, or automatically
+combine ML and docking rankings. The user must select a candidate and provide
+its structure file manually. Example SMILES under `docking/examples/drd2/` are
+for workflow testing; their presence does not establish experimental DRD2
+activity.
+
+## Scope and limitations
+
+- The Vina score is a simplified, approximate scoring-function output. It is
+  useful for pose generation and cautious relative triage under a consistent
+  protocol, not as a calibrated experimental affinity.
+- The workflow uses the DRD2 conformation in PDB 6CM4, an X-ray structure with
+  co-crystallized risperidone. A single receptor conformation cannot represent
+  all receptor states or conformational flexibility.
+- Ligand protonation, tautomerism, stereochemistry, salt removal, and
+  coordinate generation affect preparation and can affect the result. Check
+  these explicitly for each candidate.
+- Docking outcomes depend on receptor preparation, box placement, search
+  settings, and stochastic search. Use matched settings for comparisons,
+  consider repeated runs for close candidates, and inspect the poses rather
+  than interpreting scores alone.
+- A plausible pose does not establish cellular activity, functional
+  pharmacology, selectivity, exposure, safety, or experimental binding.
+
+Treat ML predictions and docking results as **complementary hypotheses** for
+choosing experiments. Preserve the model version, input SMILES, prepared
+structure/protonation state, receptor cache, docking settings, pose, and score
+for every candidate so decisions can be reproduced and compared.
 
 ## Environment
 
@@ -49,11 +102,14 @@ Install Vina from conda-forge rather than pip; pip may try to build it from
 source. The environment belongs in Ubuntu's home directory. The repository can
 remain on the Windows-mounted drive.
 
-## Dock one experimental or candidate molecule
+## Dock one ML-prioritized or control molecule
 
-Provide a SMILES string in a `.smi` file (one molecule per file for this
-workflow), or an `.sdf`/`.mol` file. Prefer correctly standardized structures
-and appropriate protonation/tautomer states for the assay context. For example:
+Provide the selected candidate's SMILES in a `.smi` file (one molecule per file
+for this workflow), or provide an `.sdf`/`.mol` file. Prefer a standardized
+structure and choose a protonation/tautomer state appropriate to the assay
+conditions. Retain the exact input structure alongside its ML prediction so
+that the docked molecule can be traced back to the prioritized candidate. For
+example:
 
 ```bash
 python vina_autodock.py
@@ -69,8 +125,10 @@ The prepared DRD2 receptor and docking box are cached in
 receive copies of the shared receptor files, allowing candidates to be
 compared against identical receptor coordinates and box settings. Remove that
 cache only when deliberately rebuilding the shared receptor; after doing so,
-redock all candidates being compared. Vina's search can still vary, so consider
-repeated runs or a more systematic protocol when ranking close candidates.
+redock all candidates being compared. This controls receptor preparation
+between candidates, but does not remove uncertainty from ligand preparation
+or Vina's search. Consider repeated runs or a more systematic protocol when
+ranking close candidates.
 
 Salt inputs with exactly one carbon-containing component have disconnected
 non-carbon ions removed with a warning. Multiple carbon-containing components
@@ -78,10 +136,11 @@ are rejected rather than guessed. Inspect protonation, stereochemistry, and
 the resulting pose.
 
 Outputs are stored under `docking/runs/<ligand-file-name>/`, including
-`docked_poses.pdbqt`, `vina.log`, and prepared receptor/ligand files. Treat the
-scores as a computational prioritization signal only. Check pose plausibility,
-compare against appropriate known ligands and controls, and experimentally
-test promising candidates in vitro.
+`docked_poses.pdbqt`, `vina.log`, and prepared receptor/ligand files. Record
+which ML-prioritized candidate and input structure each run represents. Treat
+the scores as a computational prioritization signal only. Check pose
+plausibility, compare against appropriate known ligands and controls, and
+experimentally test promising candidates in vitro.
 
 ## Visualize docking results
 
@@ -110,5 +169,8 @@ complete hydrogen-bond analysis.
 PDB 6CM4 is DRD2 with co-crystallized risperidone. A useful workflow control is
 to redock the native ligand and compare the predicted pose with its
 crystallographic pose. This checks aspects of the docking setup but does not
-validate predicted potency for new molecules. Ultimately, experimental
-measurements determine whether a prioritized candidate is active.
+validate predicted potency for new molecules. Include suitable known active
+and inactive reference compounds when evaluating a prioritization protocol,
+and assess whether docking adds value beyond the ML model alone. Ultimately,
+experimental DRD2 measurements determine whether a prioritized candidate is
+active and whether a prediction should inform future model training.

@@ -10,3 +10,7 @@
         - pCHEMBL value is a conversion
     - Define a clear goal
     - Start introduction of paper
+    - Find appropriate crystal structures for docking
+        - 9BS9	LSD (per the paper)	Active, with miniGαoA	Cryo-EM	2.28 Å (local refinement)	Jain et al. 2025
+            - """Can't find the Electron Map, even with the download tip"""
+        - 6CM4 Risperidone (antagonist/inverse agonist)	Inactive	X-ray	2.87 Å	Wang 2018

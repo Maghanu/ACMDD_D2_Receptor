@@ -42,6 +42,38 @@ The project is organized into a clear workflow structure so that data, analysis 
 5. Explore scaffold similarity analyses:
    - `python src/step3_similar_scaffold.py`
 
+## Molecular docking setup
+
+The Vina Python bindings used by this script are supported on Linux and macOS,
+not native Windows. On Windows, run the script in Ubuntu under WSL. From
+PowerShell, install Ubuntu if WSL is not already set up:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+After Ubuntu is installed, open the Ubuntu terminal. Install Miniforge inside
+Ubuntu (not the Windows Miniconda installation). In the commands below, accept
+the installer defaults and allow it to initialize the shell:
+
+```bash
+cd ~
+curl -L -o Miniforge3.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3.sh
+source ~/miniforge3/etc/profile.d/conda.sh
+conda create -n drd2-vina -c conda-forge python=3.11 vina meeko rdkit biopython pdbfixer openmm matplotlib -y
+conda activate drd2-vina
+cd "/mnt/c/Users/manup/Documents/Leiden Universiteit/LUMC/Advanced Computational Methods in Drug Discovery/Mini-Research/ACMDD_D2_Receptor"
+python vina_autodock.py
+```
+
+The environment is created under Ubuntu's home directory, rather than on the
+Windows-mounted project drive. This avoids WSL permission issues with virtual
+environment activation. Install Vina through conda-forge rather than pip to
+avoid trying to compile it from source.
+
+When prompted, enter a ligand file path (`.sdf`, `.mol`, or `.smi`). The script downloads the DRD2 structure from RCSB PDB entry 6CM4, prepares the receptor and ligand, derives the docking box from the co-crystallized risperidone, and writes poses and a log under `docking/runs/`. See [docking/README.md](./docking/README.md) for scope and caveats.
+
 ## Project goals
 
 The main goals of the project are to:

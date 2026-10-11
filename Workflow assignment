@@ -23,6 +23,7 @@ Workflow:
     - Make the model predict unknown IC50 values for unexplored ligands with similar scaffolds as known antagonists
     - Also look at Kd values 
     - What is difference in scaffold molecules of poor binding compared to high binding
+    - Test predicted pIC50 values of scaffold with ChEMBL similarity (sanity check)
 
 
 3. Exclusion of D3/D4 binding ligands

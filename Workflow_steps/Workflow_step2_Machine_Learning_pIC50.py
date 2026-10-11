@@ -9,6 +9,7 @@ import random
 import time
 from pathlib import Path
 
+import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -19,10 +20,12 @@ from sklearn.model_selection import KFold, train_test_split
 from sklearn.neural_network import MLPRegressor
 from sklearn.svm import SVR
 
+from Workflow_step2_Convert_to_Fingerprint import smiles_to_fp
+
 # ----------------------------------------------------------------------------
 # Settings
 # ----------------------------------------------------------------------------
-DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"  # ACMDD_D2_Receptor/data
 OUT_DIR = DATA_DIR
 FINGERPRINTS = ("maccs", "morgan2", "morgan3")
 SEED = 22
@@ -105,6 +108,45 @@ def crossvalidation(method, X, y, n_folds=N_FOLDS):
     return rows
 
 
+# ----------------------------------------------------------------------------
+# Final model for prediction on new datasets
+# ----------------------------------------------------------------------------
+# Best combination in the cross-validation above (highest R², lowest RMSE)
+FINAL_MODEL = "SVR"
+FINAL_FINGERPRINT = "morgan2"
+FINAL_MODEL_PATH = OUT_DIR / f"final_{FINAL_MODEL.lower()}_{FINAL_FINGERPRINT}.joblib"
+
+
+def train_final_model():
+    """Fit the chosen model on ALL compounds (no split) and save it to disk."""
+    X, y = load_fingerprint_data(FINAL_FINGERPRINT)
+    model = get_models()[FINAL_MODEL].fit(X, y)
+    joblib.dump(model, FINAL_MODEL_PATH)
+    print(f"\nFinal {FINAL_MODEL} ({FINAL_FINGERPRINT}) fit on {len(y)} compounds -> {FINAL_MODEL_PATH}")
+    return model
+
+
+def predict_pic50(smiles_list, model_path=FINAL_MODEL_PATH):
+    """Predict pIC50 and IC50 (nM) for new SMILES with the saved model (no retraining).
+
+    Usage from another script or notebook:
+        from Workflow_step2_Machine_Learning_pIC50 import predict_pic50
+        predictions = predict_pic50(new_df["smiles"])
+    """
+    model = joblib.load(model_path)
+    rows = []
+    for smi in smiles_list:
+        fp = smiles_to_fp(smi, FINAL_FINGERPRINT)  # same featurisation as the training data
+        if fp is None:  # SMILES RDKit cannot parse
+            rows.append({"smiles": smi, "pred_pIC50": np.nan, "pred_IC50_nM": np.nan})
+            continue
+        if FINAL_FINGERPRINT == "maccs":
+            fp = fp[1:]  # training data dropped MACCS bit 0
+        pic50 = model.predict(fp.reshape(1, -1).astype(float))[0]
+        rows.append({"smiles": smi, "pred_pIC50": pic50, "pred_IC50_nM": 10 ** (9 - pic50)})
+    return pd.DataFrame(rows)
+
+
 if __name__ == "__main__":
     split_rows, cv_rows = [], []
     for method in FINGERPRINTS:
@@ -123,3 +165,6 @@ if __name__ == "__main__":
     print(split_df.round(2).to_string(index=False))
     print(f"\n{N_FOLDS}-fold cross-validation")
     print(cv_df.round(2).to_string(index=False))
+
+    # Save the final model so new datasets can be predicted later without retraining
+    train_final_model()

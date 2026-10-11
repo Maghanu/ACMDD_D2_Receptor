@@ -1,0 +1,9 @@
+Step Machine learning – predicting pIC50 values
+Outcome: A file with similar scaffolds from database, respectively with their predicted pIC50 values from ML
+-Top hits are searched on Pubchem
+Sanity check: ChEMBL is used to look at similar compounds that are an antagonist of the dopamine d2 receptor to check if predicted value is realistic. 
+ChEMBL similarity 69% with top hit:
+s_2230__14934458__16949512,CC1=C(C(=O)N2CCCCC2=N1)CCN3CCN(CC3)C4=C(C(=CC=C4)Cl)Cl,8.1762826067138,6.663730018548247 (only top hit found on PubChem)
+pIC50 similar to existing comparable compound: difference pIC50 8.58 vs 8.18
+
+

@@ -39,7 +39,12 @@ def parse_pose_models(path: Path) -> list[dict]:
     current = None
     for line in path.read_text(encoding="ascii").splitlines():
         if line.startswith("MODEL"):
-            current = {"score": None, "atoms": [], "smiles_indices": {}}
+            current = {
+                "score": None,
+                "atoms": [],
+                "smiles": None,
+                "smiles_indices": {},
+            }
         elif current is None:
             continue
         elif line.startswith("REMARK VINA RESULT:"):
@@ -52,6 +57,8 @@ def parse_pose_models(path: Path) -> list[dict]:
                     for smiles_index, atom_serial in zip(values[::2], values[1::2])
                 }
             )
+        elif line.startswith("REMARK SMILES "):
+            current["smiles"] = line.partition("REMARK SMILES ")[2]
         elif line.startswith(("ATOM  ", "HETATM")):
             atom_type = line.split()[-1].upper()
             current["atoms"].append(

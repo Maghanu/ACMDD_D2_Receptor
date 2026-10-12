@@ -56,13 +56,20 @@ experimental activity.
 Docking provides a structural follow-up for selected molecules. The Vina
 workflow accepts `.smi`, `.sdf`, or `.mol` input, prepares each ligand against
 a shared prepared DRD2 receptor, and writes poses and visualizations under
-`docking/runs/<ligand-name>/`. On Windows, run Vina in Ubuntu under WSL; setup
-and usage are documented in [docking/README.md](./docking/README.md).
+`docking/runs/<ligand-name>/`. Every successful run is recorded in
+`docking/runs/docking_summary.csv`, with the Vina score and kcal/mol units
+clearly identified. On Windows, run Vina in Ubuntu under WSL; setup and usage
+are documented in [docking/README.md](./docking/README.md).
 
-Docking scores are approximate scoring-function outputs. They are useful, at
-most, as one piece of evidence when prioritizing model-selected candidates.
-Compare candidates using the same receptor, box, and settings; inspect the
-poses and ligand preparation; then use experimental testing to establish
+This workflow uses AutoDock Vina's `vina` scoring function. It approximately
+rewards shape complementarity, hydrophobic contacts, and hydrogen-bonding
+interactions while penalizing steric clashes and ligand flexibility. The
+receptor is treated as rigid. A Vina score in kcal/mol is a scoring-function
+estimate, not a measured binding free energy, affinity, or pIC50; it does not
+simulate every contribution to binding. Scores can be used cautiously to
+compare poses and prioritize compounds when receptor, box, preparation, and
+settings are kept consistent, but small score differences are not definitive.
+Inspect ligand protonation and pose quality, and use experiments to establish
 activity. Existing example SMILES are for workflow testing unless their
 experimental DRD2 activity is explicitly documented.
 

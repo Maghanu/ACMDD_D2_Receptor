@@ -19,10 +19,23 @@ in-vitro assay.
 The two computational stages estimate different things. The ML stage predicts
 an activity endpoint from patterns in known active compounds; Vina searches
 for poses in a prepared receptor and assigns an approximate score using its
-scoring function. A Vina score in kcal/mol is **not an experimentally measured
-binding free energy or affinity**, and should not be directly combined
-arithmetically with a predicted pIC50. A favorable docking score alone is not
-evidence that an otherwise unprioritized compound is a DRD2 hit.
+scoring function. This workflow uses the standard Vina scoring function, which
+approximates favorable steric/shape complementarity, hydrophobic contacts, and
+hydrogen bonding, while penalizing steric clashes and ligand flexibility.
+These terms are simplified and do not represent every physical contribution to
+binding. In particular, this workflow docks against a rigid receptor; it does
+not sample receptor conformational changes or explicitly model binding-site
+water molecules.
+
+A Vina score reported in kcal/mol is a **scoring-function estimate**, not an
+experimentally measured binding free energy, affinity, or pIC50. It should not
+be interpreted as a calibrated thermodynamic value or combined arithmetically
+with predicted pIC50. Docking ligands separately is the usual screening
+workflow; scores are cautiously comparable for relative triage when the same
+receptor, box, ligand-preparation policy, and scoring/search settings are used.
+They are not guaranteed to provide a reliable rank, and small differences may
+not be meaningful. A favorable docking score alone is not evidence that an
+otherwise unprioritized compound is a DRD2 hit.
 
 ## Intended ML-to-docking-to-experiment workflow
 
@@ -52,9 +65,11 @@ activity.
 
 ## Scope and limitations
 
-- The Vina score is a simplified, approximate scoring-function output. It is
-  useful for pose generation and cautious relative triage under a consistent
-  protocol, not as a calibrated experimental affinity.
+- The Vina score approximates shape/steric fit, hydrophobic contacts, hydrogen
+  bonding, and a ligand-flexibility penalty. It omits or simplifies important
+  contributions to binding, and the receptor is rigid in this workflow. Use
+  scores for pose generation and cautious relative triage under a consistent
+  protocol, not as calibrated experimental affinities.
 - The workflow uses the DRD2 conformation in PDB 6CM4, an X-ray structure with
   co-crystallized risperidone. A single receptor conformation cannot represent
   all receptor states or conformational flexibility.
@@ -65,6 +80,9 @@ activity.
   settings, and stochastic search. Use matched settings for comparisons,
   consider repeated runs for close candidates, and inspect the poses rather
   than interpreting scores alone.
+- Correct ligand protonation and atom typing affect the interactions evaluated
+  by the scoring function. Check the prepared ligand and receptor before
+  interpreting scores.
 - A plausible pose does not establish cellular activity, functional
   pharmacology, selectivity, exposure, safety, or experimental binding.
 
@@ -112,7 +130,7 @@ that the docked molecule can be traced back to the prioritized candidate. For
 example:
 
 ```bash
-python vina_autodock.py
+python Workflow_steps/Workflow_step7_vina_autodock.py
 ```
 
 When prompted, enter a path such as
@@ -142,6 +160,39 @@ the scores as a computational prioritization signal only. Check pose
 plausibility, compare against appropriate known ligands and controls, and
 experimentally test promising candidates in vitro.
 
+After every successful docking run, the workflow creates or updates
+`docking/runs/docking_summary.csv`. It records the run name and directory,
+input file, docked SMILES when available, optional prediction metadata, the
+best Vina score in the explicitly named `vina_score_kcal_mol` column, and a
+UTC timestamp. The score description in each row clarifies that this is an
+approximate Vina score, not an experimental affinity. Re-running a ligand
+updates that run's row rather than adding a duplicate.
+
+## Dock the top predicted-pIC50 candidates
+
+The prediction CSV can be ranked by predicted pIC50 and its ten highest-scoring
+SMILES docked against the same cached receptor:
+
+```bash
+python Workflow_steps/Workflow_step7_vina_autodock.py --top-predictions
+```
+
+By default, this reads
+`Workflow_steps/data/predicted_pIC50_svr.csv` and selects ten candidates in
+descending predicted-pIC50 order. The CSV must contain `smiles` and either a
+`predicted_pIC50` or `pred_pIC50` column; `compound_id` is used to identify
+each run when present. To select another CSV or change the count, pass
+`--predictions-csv path/to/predictions.csv --top 10`.
+
+Each candidate gets an individual directory under `docking/runs/`. The
+`docking/runs/top_10_docking_summary.csv` file records the prediction rank,
+compound ID, input SMILES, predicted pIC50, Vina score, and run directory.
+Each successful candidate run is also recorded in the shared
+`docking/runs/docking_summary.csv` file alongside results from single-ligand
+runs.
+Predicted pIC50 and Vina scores are separate computational estimates; neither
+is an experimental activity measurement.
+
 ## Visualize docking results
 
 Run the plotter and enter the run name (the ligand filename without its
@@ -161,8 +212,13 @@ explorer.exe "$(wslpath -w docking/runs/ligand/visualization_3d.html)"
 ```
 
 The 3D view shows crystallographic DRD2 helices, the docked pose, nearby
-pocket residues, and close N/O contacts. These distance markers are not a
-complete hydrogen-bond analysis.
+pocket residues, and element-colored pocket and ligand atoms. Its legend
+identifies ligand elements. Gold connectors and listed distances mark close
+nitrogen/oxygen pairs that could be polar contacts; green connectors mark
+close carbon/carbon proximities that could reflect hydrophobic packing. These
+are simple geometric cues, not confirmed hydrogen bonds, measured binding
+forces, or an energy decomposition. Use the pose as a visual aid and assess
+contacts in their chemical and protonation context.
 
 ## Scientific validation
 

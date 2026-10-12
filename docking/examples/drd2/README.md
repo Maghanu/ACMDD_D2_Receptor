@@ -19,7 +19,7 @@ its docking score.
 From the repository root in the configured WSL/Conda environment:
 
 ```bash
-python vina_autodock.py
+python Workflow_steps/Workflow_step7_vina_autodock.py
 ```
 
 At the prompt, enter a path such as
@@ -27,8 +27,10 @@ At the prompt, enter a path such as
 `docking/runs/<input-filename-without-extension>/`.
 
 The long-term use case is to pass experimentally grounded, ML-prioritized
-candidate SMILES to docking for structural triage. The current example inputs
-do not constitute a candidate library, and the docking script does not yet
-automatically consume ML predictions. For comparisons, keep the shared
-prepared receptor, box, and settings fixed, inspect the poses, and confirm
-activity experimentally.
+candidate SMILES to docking for structural triage. The top-predictions option
+can dock the highest-scoring candidates from the project's prediction CSV;
+see `docking/README.md` for details. The example inputs do not constitute a
+candidate library. Vina scores are approximate scoring-function estimates,
+not experimental affinities or pIC50 values. For cautious relative
+comparisons, keep the shared prepared receptor, box, ligand-preparation policy,
+and settings fixed, inspect the poses, and confirm activity experimentally.

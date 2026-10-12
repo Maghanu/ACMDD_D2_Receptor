@@ -19,6 +19,18 @@ from plot_docking import (
     parse_pose_models,
 )
 
+ELEMENT_COLORS = {
+    "C": "#b8c2cc",
+    "N": "#4da3ff",
+    "O": "#ff5c5c",
+    "S": "#f2c14e",
+    "P": "#ff9f43",
+    "F": "#62c370",
+    "CL": "#62c370",
+    "BR": "#a879d8",
+    "I": "#a879d8",
+}
+
 
 def parse_mmcif_loop(path: Path, category: str) -> tuple[list[str], list[list[str]]]:
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -78,7 +90,7 @@ def pdb_helix_record(
 
 
 def receptor_pdb_with_helices(run_dir: Path) -> str:
-    from vina_autodock import DRD2_SEQUENCE_RANGES
+    from Workflow_steps.Workflow_step7_vina_autodock import DRD2_SEQUENCE_RANGES
 
     cif_path = run_dir / "6CM4.cif"
     receptor_path = run_dir / "drd2_repaired.pdb"
@@ -179,13 +191,23 @@ def make_ligand_molblock(run_dir: Path, best_pose: dict) -> tuple[str, list[dict
     from rdkit import Chem
     from rdkit.Geometry import Point3D
 
-    supplier = Chem.SDMolSupplier(
-        str(run_dir / "ligand_3d.sdf"),
-        removeHs=False,
-    )
-    source = next((molecule for molecule in supplier if molecule is not None), None)
-    if source is None:
-        raise ValueError(f"Could not read a ligand from {run_dir / 'ligand_3d.sdf'}.")
+    pose_smiles = best_pose.get("smiles")
+    if pose_smiles:
+        source = Chem.MolFromSmiles(pose_smiles)
+        if source is None:
+            raise ValueError(
+                f"Could not parse the ligand SMILES stored in the docked pose "
+                f"for {run_dir}."
+            )
+    else:
+        supplier = Chem.SDMolSupplier(
+            str(run_dir / "ligand_3d.sdf"),
+            removeHs=False,
+        )
+        source = next((molecule for molecule in supplier if molecule is not None), None)
+        if source is None:
+            raise ValueError(f"Could not read a ligand from {run_dir / 'ligand_3d.sdf'}.")
+
     positions = atom_positions_by_molecule_index(best_pose, source)
 
     ligand_atoms = []
@@ -198,68 +220,101 @@ def make_ligand_molblock(run_dir: Path, best_pose: dict) -> tuple[str, list[dict
                 "element": atom.GetSymbol().upper(),
                 "index": atom_index,
                 "position": position,
+                "hydrophobic": atom.GetSymbol() == "C"
+                and all(
+                    neighbor.GetSymbol() == "C"
+                    for neighbor in atom.GetNeighbors()
+                    if neighbor.GetSymbol() not in {"H", "D"}
+                ),
             }
         )
-    conformer = source.GetConformer()
+    conformer = Chem.Conformer(source.GetNumAtoms())
     for atom_index, position in positions.items():
         conformer.SetAtomPosition(atom_index, Point3D(*position))
-    molecule = Chem.RemoveHs(source)
-    return Chem.MolToMolBlock(molecule), ligand_atoms
+    source.RemoveAllConformers()
+    source.AddConformer(conformer, assignId=True)
+    return Chem.MolToMolBlock(source), ligand_atoms
 
 
 def contact_data(
     protein_atoms: list[dict],
     ligand_atoms: list[dict],
 ) -> tuple[list[dict], list[dict]]:
+    hydrophobic_residues = {
+        "ALA", "VAL", "LEU", "ILE", "MET", "PHE", "TRP", "PRO", "TYR", "CYS"
+    }
     contacts_by_residue = {}
-    polar_pairs = []
+    interactions_by_residue: dict[tuple[str, int, str], dict] = {}
     for protein_atom in protein_atoms:
-        closest = min(
-            (
-                (
-                    sum(
-                        (
-                            protein_atom["position"][axis]
-                            - ligand_atom["position"][axis]
-                        ) ** 2
-                        for axis in range(3)
-                    ) ** 0.5,
-                    ligand_atom,
-                )
-                for ligand_atom in ligand_atoms
-            ),
-            key=lambda item: item[0],
-        )
-        distance, ligand_atom = closest
         residue_key = (protein_atom["chain"], protein_atom["resi"])
-        current = contacts_by_residue.get(residue_key)
-        if distance <= 4.5 and (current is None or distance < current["distance"]):
-            contacts_by_residue[residue_key] = {
-                "chain": protein_atom["chain"],
-                "resi": protein_atom["resi"],
-                "residue": protein_atom["residue"],
-                "distance": distance,
-                "position": protein_atom["position"],
-            }
-        if (
-            distance <= 3.5
-            and protein_atom["element"] in {"N", "O"}
-            and ligand_atom["element"] in {"N", "O"}
-        ):
-            polar_pairs.append(
-                {
+        for ligand_atom in ligand_atoms:
+            distance = sum(
+                (
+                    protein_atom["position"][axis]
+                    - ligand_atom["position"][axis]
+                ) ** 2
+                for axis in range(3)
+            ) ** 0.5
+            residue_contact = contacts_by_residue.get(residue_key)
+            if distance <= 4.5 and (
+                residue_contact is None or distance < residue_contact["distance"]
+            ):
+                contacts_by_residue[residue_key] = {
+                    "chain": protein_atom["chain"],
+                    "resi": protein_atom["resi"],
+                    "residue": protein_atom["residue"],
+                    "distance": distance,
+                    "position": protein_atom["position"],
+                }
+
+            interaction_type = None
+            cutoff = 0.0
+            if (
+                (protein_atom["element"] == "N" and ligand_atom["element"] == "O")
+                or (protein_atom["element"] == "O" and ligand_atom["element"] == "N")
+            ):
+                interaction_type = "polar"
+                cutoff = 3.5
+            elif (
+                protein_atom["residue"] in hydrophobic_residues
+                and protein_atom["element"] == "C"
+                and protein_atom["atom"] not in {"C", "CA"}
+                and ligand_atom["hydrophobic"]
+            ):
+                interaction_type = "hydrophobic"
+                cutoff = 4.0
+            if interaction_type is None or distance > cutoff:
+                continue
+
+            interaction_key = (*residue_key, interaction_type)
+            interaction = interactions_by_residue.get(interaction_key)
+            if interaction is None or distance < interaction["distance"]:
+                interactions_by_residue[interaction_key] = {
+                    "type": interaction_type,
                     "distance": distance,
                     "start": protein_atom["position"],
                     "end": ligand_atom["position"],
                     "residue": protein_atom["residue"],
                     "chain": protein_atom["chain"],
                     "resi": protein_atom["resi"],
+                    "protein_atom": protein_atom["atom"],
                     "ligand_element": ligand_atom["element"],
                 }
-            )
+
     contacts = sorted(contacts_by_residue.values(), key=lambda item: item["distance"])
-    polar_pairs.sort(key=lambda item: item["distance"])
-    return contacts, polar_pairs[:6]
+    interactions = []
+    for interaction_type in ("polar", "hydrophobic"):
+        interactions.extend(
+            sorted(
+                (
+                    interaction
+                    for interaction in interactions_by_residue.values()
+                    if interaction["type"] == interaction_type
+                ),
+                key=lambda item: item["distance"],
+            )[:6]
+        )
+    return contacts, interactions
 
 
 def build_html(run_dir: Path) -> str:
@@ -268,7 +323,7 @@ def build_html(run_dir: Path) -> str:
     protein_pdb = receptor_pdb_with_helices(run_dir)
     atoms = receptor_atoms(run_dir / "drd2_repaired.pdb")
     ligand_molblock, ligand_atoms = make_ligand_molblock(run_dir, best_pose)
-    contacts, polar_pairs = contact_data(atoms, ligand_atoms)
+    contacts, interactions = contact_data(atoms, ligand_atoms)
     pocket = [contact for contact in contacts if contact["distance"] <= 4.5]
     pocket_groups = {}
     for contact in pocket:
@@ -281,6 +336,7 @@ def build_html(run_dir: Path) -> str:
         }
         for contact in contacts[:10]
     ]
+    ligand_elements = sorted({atom["element"] for atom in ligand_atoms})
     payload = json.dumps(
         {
             "protein": protein_pdb,
@@ -288,7 +344,9 @@ def build_html(run_dir: Path) -> str:
             "score": best_pose["score"],
             "pocket": pocket_groups,
             "labels": labels,
-            "polarPairs": polar_pairs,
+            "interactions": interactions,
+            "elementColors": ELEMENT_COLORS,
+            "ligandElements": ligand_elements,
             "poses": len(poses),
             "residueCount": len(contacts),
         }
@@ -310,7 +368,7 @@ viewer.addStyle(
 for (const [chain, residues] of Object.entries(data.pocket)) {
   viewer.addStyle(
     {model: protein, chain: chain, resi: residues},
-    {stick: {radius: 0.19, color: '#8fa3af'}}
+    {stick: {radius: 0.19, colorscheme: 'Jmol'}}
   );
 }
 for (const label of data.labels) {
@@ -327,15 +385,10 @@ for (const label of data.labels) {
 }
 const ligand = viewer.addModel(data.ligand, 'mol');
 ligand.setStyle({}, {
-  stick: {radius: 0.27, color: '#f0529c'},
-  sphere: {scale: 0.27, color: '#f0529c'}
+  stick: {radius: 0.27, color: '#b8c2cc'},
+  sphere: {scale: 0.27, color: '#b8c2cc'}
 });
-for (const [element, color] of Object.entries({
-  N: '#2789e8',
-  O: '#ed5149',
-  S: '#d99b19',
-  CL: '#31ad68'
-})) {
+for (const [element, color] of Object.entries(data.elementColors)) {
   viewer.setStyle(
     {model: ligand, elem: element},
     {
@@ -345,12 +398,13 @@ for (const [element, color] of Object.entries({
     true
   );
 }
-for (const pair of data.polarPairs) {
+for (const interaction of data.interactions) {
+  const isPolar = interaction.type === 'polar';
   viewer.addCylinder({
-    start: {x: pair.start[0], y: pair.start[1], z: pair.start[2]},
-    end: {x: pair.end[0], y: pair.end[1], z: pair.end[2]},
-    radius: 0.045,
-    color: '#f0c75e',
+    start: {x: interaction.start[0], y: interaction.start[1], z: interaction.start[2]},
+    end: {x: interaction.end[0], y: interaction.end[1], z: interaction.end[2]},
+    radius: isPolar ? 0.045 : 0.03,
+    color: isPolar ? '#f0c75e' : '#55c98a',
     fromCap: 1,
     toCap: 1
   });
@@ -365,6 +419,18 @@ document.getElementById('score').textContent =
   `Best Vina score ${data.score.toFixed(3)} kcal/mol · ${data.poses} poses`;
 document.getElementById('contacts').textContent =
   `${data.residueCount} residues within 4.5 Å of the ligand`;
+const interactionList = document.getElementById('interactions');
+for (const interaction of data.interactions) {
+  const item = document.createElement('li');
+  const kind = interaction.type === 'polar'
+    ? 'Candidate polar N/O contact'
+    : 'Hydrophobic-like C/C proximity';
+  item.textContent =
+    `${kind}: ${interaction.residue}${interaction.resi} ` +
+    `${interaction.protein_atom}···${interaction.ligand_element} ` +
+    `${interaction.distance.toFixed(1)} Å`;
+  interactionList.appendChild(item);
+}
 document.getElementById('reset').addEventListener('click', () => {
   viewer.zoomTo({or: focusSelections});
   viewer.render();
@@ -375,10 +441,15 @@ document.getElementById('reset').addEventListener('click', () => {
         f"<li><span class='swatch {css_class}'></span>{text}</li>"
         for css_class, text in (
             ("helix", "DRD2 helix / backbone cartoon"),
-            ("pocket", "Pocket residues within 4.5 Å"),
-            ("ligand", "Docked ligand"),
-            ("polar", "Close N/O contacts"),
+            ("pocket", "Pocket atoms (element colors)"),
+            ("polar", "Candidate polar N/O contact"),
+            ("hydrophobic", "Hydrophobic-like C/C proximity"),
         )
+    )
+    atom_legend_items = "".join(
+        f"<li><span class='swatch atom' style='background:{ELEMENT_COLORS.get(element, '#d5dbe0')}'></span>"
+        f"Ligand {element}</li>"
+        for element in ligand_elements
     )
     return f"""<!doctype html>
 <html lang="en">
@@ -402,7 +473,8 @@ document.getElementById('reset').addEventListener('click', () => {
     li {{ display: flex; gap: 9px; align-items: center; margin: 12px 0; font-size: 13px; color: #d4dde3; }}
     .swatch {{ width: 13px; height: 13px; border-radius: 50%; flex: 0 0 auto; }}
     .helix {{ background: #6fa8dc; }} .pocket {{ background: #aebbc3; }}
-    .ligand {{ background: #f0529c; }} .polar {{ background: #f0c75e; }}
+    .polar {{ background: #f0c75e; }} .hydrophobic {{ background: #55c98a; }}
+    .atom {{ border: 1px solid #45545e; }}
     button {{ background: #263b49; color: white; border: 1px solid #537082; border-radius: 6px; padding: 8px 11px; cursor: pointer; }}
     .hint {{ color: #9daeb9; font-size: 12px; line-height: 1.5; margin-top: 14px; }}
     @media (max-width: 820px) {{ main {{ grid-template-columns: 1fr; }} #viewer {{ min-height: 430px; }} }}
@@ -417,10 +489,14 @@ document.getElementById('reset').addEventListener('click', () => {
   <main>
     <div id="viewer"></div>
     <aside>
-      <h2>What you are seeing</h2>
+      <h2>Protein and interaction legend</h2>
       <ul>{legend_items}</ul>
-      <div class="hint">The crystallographic helix annotations are used for the protein cartoon. Pocket-side chains are shown as sticks; the ligand is shown in ball-and-stick style.</div>
-      <div class="hint">Drag to rotate · scroll to zoom · right-drag to pan. Gold connectors mark close ligand/receptor nitrogen–oxygen contacts; they are distance-based, not a complete hydrogen-bond analysis.</div>
+      <h2>Ligand atom elements</h2>
+      <ul>{atom_legend_items}</ul>
+      <h2>Closest candidate contacts</h2>
+      <ul id="interactions"></ul>
+      <div class="hint">Pocket side chains use element colors. Candidate polar N/O contacts (gold) and hydrophobic-like C/C proximities (green) are geometric cues only; they do not confirm hydrogen bonds, hydrophobic free energy, or binding forces.</div>
+      <div class="hint">Drag to rotate · scroll to zoom · right-drag to pan. Labels identify nearby DRD2 residues and their closest distance to the ligand.</div>
       <div class="hint">Interactive viewer loads 3Dmol.js from 3dmol.org; an internet connection is required.</div>
     </aside>
   </main>

@@ -2,15 +2,20 @@
 
 Activate the project's Vina environment, then run:
     conda install -c conda-forge vina meeko rdkit biopython pdbfixer openmm
-    python vina_autodock.py
+    python Workflow_steps/Workflow_step7_vina_autodock.py
 
 When prompted, enter the path to a ligand .sdf, .mol, or .smi file.
+Use --top-predictions to dock the highest predicted-pIC50 candidates instead.
 """
 
 from __future__ import annotations
 
+import argparse
 import contextlib
+import csv
+from datetime import datetime, timezone
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -20,8 +25,10 @@ import urllib.request
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 RUN_DIR = ROOT / "docking" / "runs"
+DOCKING_SUMMARY_PATH = RUN_DIR / "docking_summary.csv"
+DEFAULT_PREDICTIONS_CSV = ROOT / "Workflow_steps" / "data" / "predicted_pIC50_svr.csv"
 PDB_ID = "6CM4"
 SHARED_RECEPTOR_DIR = ROOT / "docking" / "prepared" / PDB_ID
 PDB_URL = f"https://files.rcsb.org/download/{PDB_ID}.cif"
@@ -524,7 +531,7 @@ def run_preparation(command: list[str], label: str) -> None:
 
 
 def dock(receptor_pdbqt: Path, ligand_pdbqt: Path, output_path: Path,
-         log_path: Path, center: list[float], size: list[float]) -> None:
+         log_path: Path, center: list[float], size: list[float]) -> float:
     from vina import Vina
 
     vina = Vina(sf_name="vina", cpu=0)
@@ -537,58 +544,281 @@ def dock(receptor_pdbqt: Path, ligand_pdbqt: Path, output_path: Path,
             vina.write_poses(str(output_path), n_poses=NUM_MODES, overwrite=True)
             scores = vina.score()
     print(f"Best Vina score: {scores[0]:.2f} kcal/mol")
+    return float(scores[0])
+
+
+def load_top_predictions(csv_path: Path, count: int) -> list[dict[str, str]]:
+    if count < 1:
+        raise ValueError("The number of candidates to dock must be at least 1.")
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"Prediction CSV not found: {csv_path}")
+
+    with csv_path.open(encoding="utf-8-sig", newline="") as input_file:
+        reader = csv.DictReader(input_file)
+        if reader.fieldnames is None or "smiles" not in reader.fieldnames:
+            raise ValueError(f"{csv_path} must contain a 'smiles' column.")
+        score_column = next(
+            (
+                name for name in ("predicted_pIC50", "pred_pIC50")
+                if name in reader.fieldnames
+            ),
+            None,
+        )
+        if score_column is None:
+            raise ValueError(
+                f"{csv_path} must contain 'predicted_pIC50' or 'pred_pIC50'."
+            )
+
+        candidates = []
+        for row_number, row in enumerate(reader, start=2):
+            smiles = (row.get("smiles") or "").strip()
+            if not smiles:
+                raise ValueError(f"{csv_path}, row {row_number}: SMILES is empty.")
+            try:
+                score = float(row[score_column])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{csv_path}, row {row_number}: invalid predicted pIC50 "
+                    f"{row.get(score_column)!r}."
+                ) from exc
+            if not math.isfinite(score):
+                raise ValueError(
+                    f"{csv_path}, row {row_number}: predicted pIC50 must be finite."
+                )
+            compound_id = (row.get("compound_id") or "").strip()
+            candidates.append(
+                {
+                    "compound_id": compound_id or f"row_{row_number}",
+                    "smiles": smiles,
+                    "predicted_pIC50": str(score),
+                }
+            )
+
+    if len(candidates) < count:
+        raise ValueError(
+            f"{csv_path} contains {len(candidates)} candidate(s), fewer than "
+            f"the requested {count}."
+        )
+    candidates.sort(
+        key=lambda candidate: float(candidate["predicted_pIC50"]),
+        reverse=True,
+    )
+    return candidates[:count]
+
+
+def record_docking_result(
+    run_dir: Path,
+    ligand_source: Path,
+    vina_score: float,
+    metadata: dict[str, str] | None = None,
+) -> None:
+    summary_fields = (
+        "run_name",
+        "run_directory",
+        "input_file",
+        "compound_id",
+        "prediction_rank",
+        "predicted_pIC50",
+        "vina_score_kcal_mol",
+        "score_description",
+        "timestamp_utc",
+        "smiles",
+    )
+    summary_path = DOCKING_SUMMARY_PATH
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    run_directory = str(run_dir.relative_to(ROOT))
+    existing_rows = []
+    if summary_path.exists():
+        with summary_path.open(encoding="utf-8-sig", newline="") as summary_file:
+            reader = csv.DictReader(summary_file)
+            if reader.fieldnames != list(summary_fields):
+                raise ValueError(
+                    f"Cannot update docking summary with unexpected columns: "
+                    f"{summary_path}"
+                )
+            existing_rows = list(reader)
+
+    pose_path = run_dir / "docked_poses.pdbqt"
+    pose_smiles = ""
+    for line in pose_path.read_text(encoding="ascii").splitlines():
+        if line.startswith("REMARK SMILES "):
+            pose_smiles = line.partition("REMARK SMILES ")[2]
+            break
+
+    row = {
+        "run_name": run_dir.name,
+        "run_directory": run_directory,
+        "input_file": str(ligand_source),
+        "compound_id": "",
+        "prediction_rank": "",
+        "predicted_pIC50": "",
+        "vina_score_kcal_mol": f"{vina_score:.3f}",
+        "score_description": "AutoDock Vina score (approximate; not experimental affinity)",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "smiles": pose_smiles,
+    }
+    row.update(metadata or {})
+    existing_rows = [
+        existing
+        for existing in existing_rows
+        if existing["run_directory"] != run_directory
+    ]
+    existing_rows.append(row)
+
+    temporary_path = summary_path.with_suffix(summary_path.suffix + ".tmp")
+    with temporary_path.open("w", encoding="utf-8", newline="") as summary_file:
+        writer = csv.DictWriter(summary_file, fieldnames=summary_fields)
+        writer.writeheader()
+        writer.writerows(existing_rows)
+    temporary_path.replace(summary_path)
+    print(f"Docking summary updated: {summary_path}")
+
+
+def dock_ligand(
+    ligand_source: Path,
+    run_name: str,
+    tools: dict[str, str],
+    center: list[float],
+    size: list[float],
+    summary_metadata: dict[str, str] | None = None,
+) -> tuple[Path, float]:
+    run_dir = RUN_DIR / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    for filename in (
+        f"{PDB_ID}.cif",
+        "drd2_clean.pdb",
+        "drd2_repaired.pdb",
+        "drd2.pdbqt",
+    ):
+        shutil.copyfile(SHARED_RECEPTOR_DIR / filename, run_dir / filename)
+
+    receptor_pdbqt = run_dir / "drd2.pdbqt"
+    ligand_sdf = run_dir / "ligand_3d.sdf"
+    ligand_pdbqt = run_dir / "ligand.pdbqt"
+    output_path = run_dir / "docked_poses.pdbqt"
+    log_path = run_dir / "vina.log"
+
+    create_ligand_sdf(ligand_source, ligand_sdf)
+    run_preparation(
+        [
+            tools["mk_prepare_ligand.py"],
+            "-i", str(ligand_sdf),
+            "-o", str(ligand_pdbqt),
+        ],
+        f"ligand {run_name}",
+    )
+    score = dock(receptor_pdbqt, ligand_pdbqt, output_path, log_path, center, size)
+    record_docking_result(run_dir, ligand_source, score, summary_metadata)
+    print(f"Docking poses: {output_path}")
+    print(f"Vina log: {log_path}")
+    return run_dir, score
+
+
+def dock_top_predictions(csv_path: Path, count: int, tools: dict[str, str]) -> Path:
+    candidates = load_top_predictions(csv_path, count)
+    center, size = prepare_shared_receptor(tools)
+    summary_path = RUN_DIR / f"top_{count}_docking_summary.csv"
+    results = []
+
+    for rank, candidate in enumerate(candidates, start=1):
+        safe_id = re.sub(r"[^A-Za-z0-9._-]+", "_", candidate["compound_id"]).strip("._")
+        if not safe_id:
+            safe_id = f"candidate_{rank:02d}"
+        run_name = f"top_{rank:02d}_{safe_id}"
+        run_dir = RUN_DIR / run_name
+        ligand_source = run_dir / "candidate.smi"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        ligand_source.write_text(candidate["smiles"] + "\n", encoding="utf-8")
+
+        _, vina_score = dock_ligand(
+            ligand_source,
+            run_name,
+            tools,
+            center,
+            size,
+            {
+                "compound_id": candidate["compound_id"],
+                "prediction_rank": str(rank),
+                "predicted_pIC50": candidate["predicted_pIC50"],
+            },
+        )
+        results.append(
+            {
+                "rank": rank,
+                "compound_id": candidate["compound_id"],
+                "smiles": candidate["smiles"],
+                "predicted_pIC50": candidate["predicted_pIC50"],
+                "vina_score_kcal_mol": vina_score,
+                "run_directory": str(run_dir.relative_to(ROOT)),
+            }
+        )
+        with summary_path.open("w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=results[0].keys())
+            writer.writeheader()
+            writer.writerows(results)
+
+    print(f"Docking summary: {summary_path}")
+    print(
+        "Note: predicted pIC50 and Vina scores are distinct computational "
+        "estimates, not experimental binding measurements."
+    )
+    return summary_path
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Prepare and dock DRD2 ligands with AutoDock Vina."
+    )
+    parser.add_argument(
+        "--top-predictions",
+        action="store_true",
+        help="dock the highest-pIC50 candidates from the prediction CSV",
+    )
+    parser.add_argument(
+        "--predictions-csv",
+        type=Path,
+        default=DEFAULT_PREDICTIONS_CSV,
+        help=f"prediction CSV (default: {DEFAULT_PREDICTIONS_CSV})",
+    )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=10,
+        help="number of top predictions to dock (default: 10)",
+    )
+    args = parser.parse_args()
+
     try:
         tools = require_dependencies()
-        raw_path = input(
-            "Enter the path to your ligand .sdf, .mol, or .smi file: "
-        ).strip().strip('"')
-        if not raw_path:
-            raise ValueError("No ligand file was provided.")
-        ligand_source = Path(raw_path.replace("\\", "/")).expanduser().resolve()
-        if not ligand_source.is_file():
-            raise FileNotFoundError(f"Ligand file not found: {ligand_source}")
+        if args.top_predictions:
+            dock_top_predictions(args.predictions_csv.expanduser().resolve(), args.top, tools)
+        else:
+            raw_path = input(
+                "Enter the path to your ligand .sdf, .mol, or .smi file: "
+            ).strip().strip('"')
+            if not raw_path:
+                raise ValueError("No ligand file was provided.")
+            ligand_source = Path(raw_path).expanduser().resolve()
+            if not ligand_source.is_file():
+                raise FileNotFoundError(f"Ligand file not found: {ligand_source}")
 
-        run_name = ligand_source.stem
-        run_dir = RUN_DIR / run_name
-        run_dir.mkdir(parents=True, exist_ok=True)
-
-        center, size = prepare_shared_receptor(tools)
-        for filename in (
-            f"{PDB_ID}.cif",
-            "drd2_clean.pdb",
-            "drd2_repaired.pdb",
-            "drd2.pdbqt",
-        ):
-            shutil.copyfile(SHARED_RECEPTOR_DIR / filename, run_dir / filename)
-
-        receptor_pdbqt = run_dir / "drd2.pdbqt"
-        ligand_sdf = run_dir / "ligand_3d.sdf"
-        ligand_pdbqt = run_dir / "ligand.pdbqt"
-        output_path = run_dir / "docked_poses.pdbqt"
-        log_path = run_dir / "vina.log"
-
-        create_ligand_sdf(ligand_source, ligand_sdf)
-        run_preparation(
-            [
-                tools["mk_prepare_ligand.py"],
-                "-i", str(ligand_sdf),
-                "-o", str(ligand_pdbqt),
-            ],
-            "ligand",
-        )
-
-        dock(receptor_pdbqt, ligand_pdbqt, output_path, log_path, center, size)
-        print(f"Docking poses: {output_path}")
-        print(f"Vina log: {log_path}")
-        print(
-            "Note: this is a docking score, not an experimental binding affinity. "
-            "Review the receptor preparation and pose before interpreting it."
-        )
+            center, size = prepare_shared_receptor(tools)
+            run_dir, _ = dock_ligand(
+                ligand_source, ligand_source.stem, tools, center, size
+            )
+            print(
+                "Note: this is a docking score, not an experimental binding affinity. "
+                f"Review the receptor preparation and pose in {run_dir}."
+            )
         return 0
-    except (RuntimeError, ValueError, FileNotFoundError, subprocess.CalledProcessError) as exc:
+    except (
+        RuntimeError,
+        ValueError,
+        FileNotFoundError,
+        OSError,
+        csv.Error,
+        subprocess.CalledProcessError,
+    ) as exc:
         print(f"Docking could not be completed: {exc}", file=sys.stderr)
         return 1
 

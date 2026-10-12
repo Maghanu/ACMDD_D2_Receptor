@@ -555,8 +555,12 @@ def load_top_predictions(csv_path: Path, count: int) -> list[dict[str, str]]:
 
     with csv_path.open(encoding="utf-8-sig", newline="") as input_file:
         reader = csv.DictReader(input_file)
-        if reader.fieldnames is None or "smiles" not in reader.fieldnames:
-            raise ValueError(f"{csv_path} must contain a 'smiles' column.")
+        smiles_column = next(
+            (name for name in ("smiles", "SMILES") if name in (reader.fieldnames or [])),
+            None,
+        )
+        if reader.fieldnames is None or smiles_column is None:
+            raise ValueError(f"{csv_path} must contain a 'smiles' or 'SMILES' column.")
         score_column = next(
             (
                 name for name in ("predicted_pIC50", "pred_pIC50")
@@ -571,7 +575,7 @@ def load_top_predictions(csv_path: Path, count: int) -> list[dict[str, str]]:
 
         candidates = []
         for row_number, row in enumerate(reader, start=2):
-            smiles = (row.get("smiles") or "").strip()
+            smiles = (row.get(smiles_column) or "").strip()
             if not smiles:
                 raise ValueError(f"{csv_path}, row {row_number}: SMILES is empty.")
             try:
@@ -585,7 +589,12 @@ def load_top_predictions(csv_path: Path, count: int) -> list[dict[str, str]]:
                 raise ValueError(
                     f"{csv_path}, row {row_number}: predicted pIC50 must be finite."
                 )
-            compound_id = (row.get("compound_id") or "").strip()
+            compound_id = (
+                row.get("compound_id")
+                or row.get("zincid")
+                or row.get("zinc_id")
+                or ""
+            ).strip()
             candidates.append(
                 {
                     "compound_id": compound_id or f"row_{row_number}",
@@ -681,8 +690,9 @@ def dock_ligand(
     center: list[float],
     size: list[float],
     summary_metadata: dict[str, str] | None = None,
+    run_dir: Path | None = None,
 ) -> tuple[Path, float]:
-    run_dir = RUN_DIR / run_name
+    run_dir = run_dir or RUN_DIR / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
     for filename in (
         f"{PDB_ID}.cif",
@@ -714,10 +724,16 @@ def dock_ligand(
     return run_dir, score
 
 
-def dock_top_predictions(csv_path: Path, count: int, tools: dict[str, str]) -> Path:
+def dock_top_predictions(
+    csv_path: Path,
+    count: int,
+    tools: dict[str, str],
+    output_dir: Path = RUN_DIR,
+) -> Path:
     candidates = load_top_predictions(csv_path, count)
     center, size = prepare_shared_receptor(tools)
-    summary_path = RUN_DIR / f"top_{count}_docking_summary.csv"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / f"top_{count}_docking_summary.csv"
     results = []
 
     for rank, candidate in enumerate(candidates, start=1):
@@ -725,7 +741,7 @@ def dock_top_predictions(csv_path: Path, count: int, tools: dict[str, str]) -> P
         if not safe_id:
             safe_id = f"candidate_{rank:02d}"
         run_name = f"top_{rank:02d}_{safe_id}"
-        run_dir = RUN_DIR / run_name
+        run_dir = output_dir / run_name
         ligand_source = run_dir / "candidate.smi"
         run_dir.mkdir(parents=True, exist_ok=True)
         ligand_source.write_text(candidate["smiles"] + "\n", encoding="utf-8")
@@ -741,6 +757,7 @@ def dock_top_predictions(csv_path: Path, count: int, tools: dict[str, str]) -> P
                 "prediction_rank": str(rank),
                 "predicted_pIC50": candidate["predicted_pIC50"],
             },
+            run_dir=run_dir,
         )
         results.append(
             {
@@ -786,12 +803,23 @@ def main() -> int:
         default=10,
         help="number of top predictions to dock (default: 10)",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=RUN_DIR,
+        help=f"directory for top-prediction runs and summary (default: {RUN_DIR})",
+    )
     args = parser.parse_args()
 
     try:
         tools = require_dependencies()
         if args.top_predictions:
-            dock_top_predictions(args.predictions_csv.expanduser().resolve(), args.top, tools)
+            dock_top_predictions(
+                args.predictions_csv.expanduser().resolve(),
+                args.top,
+                tools,
+                args.output_dir.expanduser().resolve(),
+            )
         else:
             raw_path = input(
                 "Enter the path to your ligand .sdf, .mol, or .smi file: "

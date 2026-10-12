@@ -22,6 +22,11 @@ the IC50 dataset; they do not currently train on the Kd values.
 - `DopamineD2_maccs.csv`, `DopamineD2_morgan2.csv`, and
   `DopamineD2_morgan3.csv` — molecular fingerprints derived from the IC50
   dataset, retaining SMILES and activity columns alongside fingerprint bits
+- `random_smiles.csv` — 10,000 external ZINC SMILES with tranche and ZINC ID
+  but no measured DRD2 activity labels
+- `random_smiles_morgan2.csv` — Morgan radius-2 feature map for valid rows
+  from `random_smiles.csv`, including RDKit molecular weight in Da, created by
+  `python src/screen_random_smiles.py`
 - `P14416_updated/` and `P14416_updated.tar.gz` — additional source/reference
   materials retained with the project
 
@@ -42,3 +47,10 @@ Future candidate SMILES scored by an ML model are predictions, not experimental
 labels. Keep them in a separate, clearly identified screening table and do not
 append predictions to the experimental training data as if they were measured
 activities.
+
+The saved Morgan2 SVR can screen `random_smiles.csv` with
+`python src/screen_random_smiles.py`. Its predictions are written to
+`results/random_smiles_predicted_pic50.csv`, which includes calculated
+molecular weight in Da and is sorted by predicted pIC50 from highest to
+lowest; the input has no labels and is not used to train or evaluate the
+model.

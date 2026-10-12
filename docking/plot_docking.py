@@ -22,6 +22,7 @@ ELEMENT_COLORS = {
 ATOM_TYPE_ELEMENTS = {
     "A": "C",
     "C": "C",
+    "CG0": "C",
     "CL": "Cl",
     "F": "F",
     "N": "N",

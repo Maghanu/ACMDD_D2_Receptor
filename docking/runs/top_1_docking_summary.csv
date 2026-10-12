@@ -1,0 +1,2 @@
+rank,compound_id,smiles,predicted_pIC50,vina_score_kcal_mol,run_directory
+1,ZINCtQ00000Sk0Ja,Fc1cccc2[nH]c(=NCCCCN3CCC3)[nH]c(=NC[C@H]3CCCSCC3)c12,6.911377873069508,-7.602,docking/runs/top_01_ZINCtQ00000Sk0Ja

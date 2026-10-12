@@ -184,9 +184,14 @@ descending predicted-pIC50 order. The CSV must contain `smiles` and either a
 each run when present. To select another CSV or change the count, pass
 `--predictions-csv path/to/predictions.csv --top 10`.
 
-Each candidate gets an individual directory under `docking/runs/`. The
-`docking/runs/top_10_docking_summary.csv` file records the prediction rank,
-compound ID, input SMILES, predicted pIC50, Vina score, and run directory.
+Each candidate gets an individual directory under `docking/runs/` by default.
+Pass `--output-dir path/to/results-folder` to keep a batch and its
+`top_N_docking_summary.csv` together in a separate results folder. Input CSVs
+may use `smiles` or `SMILES` and may identify candidates with `compound_id` or
+`zincid`.
+
+The batch summary records the prediction rank, compound ID, input SMILES,
+predicted pIC50, Vina score, and run directory.
 Each successful candidate run is also recorded in the shared
 `docking/runs/docking_summary.csv` file alongside results from single-ligand
 runs.

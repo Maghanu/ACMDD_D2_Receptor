@@ -1,0 +1,2 @@
+run_name,run_directory,input_file,compound_id,prediction_rank,predicted_pIC50,vina_score_kcal_mol,score_description,timestamp_utc,smiles
+Non_binder_fixed,docking/runs/Non_binder_fixed,/mnt/c/Users/manup/Documents/Leiden Universiteit/LUMC/Advanced Computational Methods in Drug Discovery/Mini-Research/ACMDD_D2_Receptor/docking/examples/drd2/Non_binder_fixed.smi,,,,-5.131,AutoDock Vina score (approximate; not experimental affinity),2026-10-12T08:27:33+00:00,CNC[C@@H]1OCCc2ccsc21

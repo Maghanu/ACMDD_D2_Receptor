@@ -1,0 +1,20 @@
+{
+  "input_smiles": "CC1=C(C(=O)N2CCCCC2=N1)CCN3CCN(CC3)C4=C(C(=CC=C4)F)F",
+  "docking_smiles": "CC1=C(C(=O)N2CCCCC2=N1)CC[NH+]3CCN(CC3)C4=C(C(=CC=C4)F)F",
+  "formal_charge": 1,
+  "protonation_note": "One proton added to the aliphatic piperazine nitrogen for a plausible physiological cationic state.",
+  "receptor_input": "docking/Naked_NA+_6CM4/6cm4(1).m.mmcif",
+  "box_reference": "6CM4 co-crystallized risperidone (component 8NU)",
+  "box_center_angstrom": [
+    9.1765,
+    5.4704999999999995,
+    -8.6645
+  ],
+  "box_size_angstrom": [
+    14.757,
+    17.715,
+    22.814999999999998
+  ],
+  "protein_heavy_atoms_input": 2131,
+  "sodium_and_waters_scored": false
+}

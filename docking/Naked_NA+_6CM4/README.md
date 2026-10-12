@@ -7,7 +7,10 @@ estimates, not experimental binding affinities or free energies.
 ## Input and output files
 
 - Receptor input: [`6cm4(1).m.mmcif`](./6cm4(1).m.mmcif)
-- Docked structure: [`ligand1_docked_6CM4.mmcif`](./ligand1_docked_6CM4.mmcif)
+- Final Moorhen-cleaned structure:
+  [`Naked_6CM4_NA_lig1.mmcif`](./Naked_6CM4_NA_lig1.mmcif)
+- Pre-cleanup docked structure:
+  [`ligand1_docked_6CM4.mmcif`](./ligand1_docked_6CM4.mmcif)
 - Search poses and run details: [`docking/runs/ligand_1_supplied_6CM4/`](../runs/ligand_1_supplied_6CM4/)
 - Repeated-search score table: [`docking_summary.csv`](../runs/ligand_1_supplied_6CM4/docking_summary.csv)
 - Preparation metadata: [`preparation.json`](../runs/ligand_1_supplied_6CM4/preparation.json)
@@ -66,14 +69,24 @@ estimates, not experimental binding affinities or free energies.
    Thus, the selected pose is from seed 314159. The five best scores span
    0.047 kcal/mol. This close agreement is a search-repeatability observation
    for the score, not independent experimental validation of the pose.
-6. **Structure assembly and validation.** The selected pose's 28 heavy atoms
-   were added to a copy of the supplied mmCIF as component `LIG`, chain `L`,
-   with ligand atom and bond definitions. The original 2,148 atom records,
-   including protein, waters, and sodium, were preserved. Hydrogens used in
-   docking preparation are not included in the appended mmCIF ligand heavy
-   atom coordinates. The resulting file was parsed with both Biopython's
-   `MMCIF2Dict` and Gemmi; validation found one ligand residue with 28 atoms,
-   and confirmed preservation of the original atom records.
+6. **Pose assembly and post-docking cleanup.** The selected pose's 28 heavy
+   atoms were added to a copy of the supplied mmCIF as component `LIG`, chain
+   `L`, with ligand atom and bond definitions. This untrimmed pose is retained
+   as `ligand1_docked_6CM4.mmcif`; at this stage, the original 2,148 atom
+   records (protein, waters, and sodium) were preserved. Hydrogens used in
+   docking preparation are not included in the appended ligand heavy-atom
+   coordinates.
+
+   The final file, `Naked_6CM4_NA_lig1.mmcif`, was subsequently edited in
+   Moorhen. The user removed loose residues at the original T4-lysozyme
+   connection: chain A author-numbered residues 1015 (LEU), 1016 (LYS),
+   1017 (ILE), 1159 (ASP), 1160 (ALA), and 1161 (TYR), 46 protein atoms in
+   total. This is a post-docking structural cleanup, not part of receptor
+   preparation or the Vina scoring calculation; the ligand was not redocked
+   or rescored after the cleanup. Comparison of the cleaned and untrimmed
+   files confirmed that all 28 ligand atom coordinates are unchanged. The
+   cleaned mmCIF parses with Gemmi and contains one `LIG` residue with 28
+   atoms.
 
 ## Software and caveats
 

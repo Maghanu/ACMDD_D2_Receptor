@@ -25,4 +25,4 @@ Summary
 -Analysed binding modes of top 5 hits in a plip 
 -Found that Asp114 is essential as anchor binding to binding pocket at D2 dopamine receptor
 -Sodium is bound to the receptor when in inactive state, without receptor is in active state and the intracellular loops are moved.
- test
+ 

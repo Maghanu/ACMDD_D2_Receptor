@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DRD2 highest-potential ligand comparison</title>
+<style>
+body{font:15px Segoe UI,Arial,sans-serif;margin:24px;background:#101820;color:#edf2f5}
+h1{font-size:24px}p{color:#bdc9d1;max-width:1000px;line-height:1.5}
+table{border-collapse:collapse;width:100%;background:#17232d}
+th,td{border:1px solid #40515d;padding:10px;text-align:left;vertical-align:top}
+th{position:sticky;top:0;background:#263b49}
+code{white-space:normal;overflow-wrap:anywhere;font-size:12px}
+a{color:#8ecbff}.bar{width:150px;height:8px;background:#34444f;margin:4px 0;border-radius:5px}
+.bar span{display:block;height:100%;background:#67a9e8;border-radius:5px}
+.bar.active span{background:#d5aa55}small{color:#c6d1d8}
+.note{font-size:13px}
+</style>
+</head>
+<body>
+<h1>DRD2 highest-potential ligand comparison</h1>
+<p>These five compounds are shown in the supplied order (rank is user-provided,
+not an ML score). Vina scores are approximate docking estimates, not measured
+binding affinities or agonist efficacy. Lower (more negative) is the more
+favorable score within this scoring function. Each pose link opens the
+interactive visualization for that receptor state.</p>
+<p class="note">Comparisons use a 24 Å box, the same Vina search settings and
+random seed, with each box centered on the receptor's native ligand position.
+The different receptor conformations and ligand-centered boxes still limit
+direct state-to-state interpretation.</p>
+<table>
+<thead><tr><th>Input rank</th><th>Hit</th><th>SMILES</th>
+<th>Inactive 6CM4</th><th>Active 9BS9</th>
+<th>9BS9 − 6CM4 (kcal/mol)</th><th>Interactive poses</th></tr></thead>
+<tbody><tr><td>1</td><td>Hit_01</td><td><code>CC1=C(C(=O)N2CCCCC2=N1)CCN3CCN(CC3)C4=C(C(=CC=C4)F)F</code></td><td><div class="bar inactive"><span style="width:90.1%"></span></div><small>-10.817 kcal/mol</small></td><td><div class="bar active"><span style="width:76.8%"></span></div><small>-9.210 kcal/mol</small></td><td>1.607</td><td><a href="01_Hit_01/6CM4/visualization_3d.html">6CM4 pose</a><br><a href="01_Hit_01/9BS9/visualization_3d.html">9BS9 pose</a></td></tr>
+<tr><td>2</td><td>Hit_02</td><td><code>CC1=C(C(=O)N2CCCCC2=N1)CCN3CCN(CC3)C4CCC5=CC=CC=C45</code></td><td><div class="bar inactive"><span style="width:95.9%"></span></div><small>-11.509 kcal/mol</small></td><td><div class="bar active"><span style="width:81.1%"></span></div><small>-9.726 kcal/mol</small></td><td>1.783</td><td><a href="02_Hit_02/6CM4/visualization_3d.html">6CM4 pose</a><br><a href="02_Hit_02/9BS9/visualization_3d.html">9BS9 pose</a></td></tr>
+<tr><td>3</td><td>Hit_03</td><td><code>CC1=C(C(=O)N2C=CC=CC2=N1)CCN3CCN(CC3)C4=C5C=C(SC5=CC=C4)Br</code></td><td><div class="bar inactive"><span style="width:92.1%"></span></div><small>-11.054 kcal/mol</small></td><td><div class="bar active"><span style="width:79.3%"></span></div><small>-9.511 kcal/mol</small></td><td>1.543</td><td><a href="03_Hit_03/6CM4/visualization_3d.html">6CM4 pose</a><br><a href="03_Hit_03/9BS9/visualization_3d.html">9BS9 pose</a></td></tr>
+<tr><td>4</td><td>Hit_04</td><td><code>O=C1C2=CC=CC=C2N=CN1CCN3CCN(CC3)C4=CC=CC5=C4C=CS5</code></td><td><div class="bar inactive"><span style="width:86.8%"></span></div><small>-10.412 kcal/mol</small></td><td><div class="bar active"><span style="width:77.0%"></span></div><small>-9.238 kcal/mol</small></td><td>1.174</td><td><a href="04_Hit_04/6CM4/visualization_3d.html">6CM4 pose</a><br><a href="04_Hit_04/9BS9/visualization_3d.html">9BS9 pose</a></td></tr>
+<tr><td>5</td><td>Hit_05</td><td><code>C1=CC2=C(C=CS2)C(=C1)N3CCN(CC3)CCC4=CC=C5OCCCC5=C4</code></td><td><div class="bar inactive"><span style="width:87.7%"></span></div><small>-10.519 kcal/mol</small></td><td><div class="bar active"><span style="width:80.2%"></span></div><small>-9.626 kcal/mol</small></td><td>0.893</td><td><a href="05_Hit_05/6CM4/visualization_3d.html">6CM4 pose</a><br><a href="05_Hit_05/9BS9/visualization_3d.html">9BS9 pose</a></td></tr></tbody>
+</table>
+</body>
+</html>

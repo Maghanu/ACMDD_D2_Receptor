@@ -18,6 +18,10 @@ from plot_docking import (
     atom_positions_by_molecule_index,
     parse_pose_models,
 )
+from Workflow_steps.Workflow_step7_vina_autodock import (
+    RECEPTOR_STATES,
+    get_receptor_state,
+)
 
 ELEMENT_COLORS = {
     "C": "#b8c2cc",
@@ -90,20 +94,29 @@ def pdb_helix_record(
 
 
 def receptor_pdb_with_helices(run_dir: Path) -> str:
-    from Workflow_steps.Workflow_step7_vina_autodock import DRD2_SEQUENCE_RANGES
-
-    cif_path = run_dir / "6CM4.cif"
+    structure_ids = [
+        structure_id
+        for structure_id in RECEPTOR_STATES
+        if (run_dir / f"{structure_id}.cif").is_file()
+    ]
+    if len(structure_ids) != 1:
+        raise ValueError(
+            f"Expected exactly one supported receptor CIF in {run_dir}; "
+            f"found {structure_ids}."
+        )
+    receptor_state = get_receptor_state(structure_ids[0])
+    cif_path = run_dir / f"{receptor_state.structure_id}.cif"
     receptor_path = run_dir / "drd2_repaired.pdb"
     atom_headers, atom_rows = parse_mmcif_loop(cif_path, "atom_site")
     atom_index = {header: index for index, header in enumerate(atom_headers)}
     seq_to_auth = {}
+    entity_chains = set()
     for row in atom_rows:
         if row[atom_index["_atom_site.group_PDB"]] != "ATOM":
             continue
         if row[atom_index["_atom_site.label_entity_id"]] != "1":
             continue
-        if row[atom_index["_atom_site.label_asym_id"]] != "A":
-            continue
+        entity_chains.add(row[atom_index["_atom_site.label_asym_id"]])
         sequence = row[atom_index["_atom_site.label_seq_id"]]
         if sequence in {".", "?"}:
             continue
@@ -115,6 +128,29 @@ def receptor_pdb_with_helices(run_dir: Path) -> str:
                 row[atom_index["_atom_site.pdbx_PDB_ins_code"]],
             ),
         )
+    if len(entity_chains) != 1:
+        raise ValueError(
+            f"Expected one DRD2-containing polymer chain in {cif_path}; "
+            f"found {sorted(entity_chains)}."
+        )
+    label_chain = next(iter(entity_chains))
+
+    pdb_chain_by_residue = {}
+    for line in receptor_path.read_text(encoding="ascii").splitlines():
+        if line.startswith("ATOM  "):
+            key = (
+                line[17:20].strip(),
+                line[22:26].strip(),
+                line[26],
+            )
+            pdb_chain_by_residue[key] = line[21]
+    seq_to_output_chain = {}
+    for sequence, residue in seq_to_auth.items():
+        insertion = " " if residue[2] in {".", "?"} else residue[2]
+        key = (residue[0], residue[1].strip(), insertion)
+        output_chain = pdb_chain_by_residue.get(key)
+        if output_chain is not None:
+            seq_to_output_chain[sequence] = output_chain
 
     helix_headers, helix_rows = parse_mmcif_loop(cif_path, "struct_conf")
     helix_index = {header: index for index, header in enumerate(helix_headers)}
@@ -123,33 +159,52 @@ def receptor_pdb_with_helices(run_dir: Path) -> str:
     for row in helix_rows:
         if row[helix_index["_struct_conf.conf_type_id"]] not in {"HELX_P", "HELX_R"}:
             continue
-        if row[helix_index["_struct_conf.beg_label_asym_id"]] != "A":
+        if row[helix_index["_struct_conf.beg_label_asym_id"]] != label_chain:
             continue
         first = int(row[helix_index["_struct_conf.beg_label_seq_id"]])
         last = int(row[helix_index["_struct_conf.end_label_seq_id"]])
-        for segment_index, (segment_start, segment_end) in enumerate(DRD2_SEQUENCE_RANGES):
+        for segment_start, segment_end in receptor_state.drd2_sequence_ranges:
             clipped_start = max(first, segment_start)
             clipped_end = min(last, segment_end)
             if clipped_start > clipped_end:
                 continue
-            begin_info = seq_to_auth.get(clipped_start)
-            end_info = seq_to_auth.get(clipped_end)
-            if begin_info is None or end_info is None:
-                continue
-            output_chain = "A" if segment_index == 0 else "B"
             helix_id = row[helix_index["_struct_conf.pdbx_PDB_helix_id"]]
             helix_class = row[helix_index["_struct_conf.pdbx_PDB_helix_class"]]
-            helix_records.append(
-                pdb_helix_record(
-                    serial,
-                    helix_id,
-                    (begin_info[0], output_chain, begin_info[1], begin_info[2]),
-                    (end_info[0], output_chain, end_info[1], end_info[2]),
-                    int(helix_class) if helix_class not in {".", "?"} else 1,
-                    clipped_end - clipped_start + 1,
+            blocks = []
+            current_block = []
+            for sequence in range(clipped_start, clipped_end + 1):
+                residue = seq_to_auth.get(sequence)
+                output_chain = seq_to_output_chain.get(sequence)
+                if residue is None or output_chain is None:
+                    if current_block:
+                        blocks.append(current_block)
+                        current_block = []
+                    continue
+                if current_block and (
+                    sequence != current_block[-1][0] + 1
+                    or output_chain != current_block[-1][2]
+                ):
+                    blocks.append(current_block)
+                    current_block = []
+                current_block.append((sequence, residue, output_chain))
+            if current_block:
+                blocks.append(current_block)
+
+            for block in blocks:
+                begin_info = block[0][1]
+                end_info = block[-1][1]
+                output_chain = block[0][2]
+                helix_records.append(
+                    pdb_helix_record(
+                        serial,
+                        helix_id,
+                        (begin_info[0], output_chain, begin_info[1], begin_info[2]),
+                        (end_info[0], output_chain, end_info[1], end_info[2]),
+                        int(helix_class) if helix_class not in {".", "?"} else 1,
+                        len(block),
+                    )
                 )
-            )
-            serial += 1
+                serial += 1
 
     if not helix_records:
         raise ValueError(f"No DRD2 helix annotations were found in {cif_path}.")

@@ -1,0 +1,3 @@
+receptor_structure,random_seed,native_ligand_component_id,vina_score_kcal_mol,run_directory,docking_box_center,docking_box_size
+6CM4,42,8NU,-6.283,docking/runs/state_comparisons/Dopamine/6CM4,"9.177,5.470,-8.665","24.000,24.000,24.000"
+9BS9,42,7LD,-6.264,docking/runs/state_comparisons/Dopamine/9BS9,"130.257,114.439,95.493","24.000,24.000,24.000"

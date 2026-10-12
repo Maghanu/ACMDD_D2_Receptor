@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+from dataclasses import dataclass
 from datetime import datetime, timezone
+import html
 import math
 import re
 import shutil
@@ -26,20 +28,51 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 RUN_DIR = ROOT / "docking" / "runs"
 DOCKING_SUMMARY_PATH = RUN_DIR / "docking_summary.csv"
 DEFAULT_PREDICTIONS_CSV = ROOT / "Workflow_steps" / "data" / "predicted_pIC50_svr.csv"
 PDB_ID = "6CM4"
-SHARED_RECEPTOR_DIR = ROOT / "docking" / "prepared" / PDB_ID
-PDB_URL = f"https://files.rcsb.org/download/{PDB_ID}.cif"
-RISPERIDONE_COMPONENT_ID = "8NU"
 
-# 6CM4 contains DRD2 sequence positions 1-188 and 349-430 separated by a
-# T4 lysozyme fusion. Keep only the DRD2 portions of the construct.
-DRD2_SEQUENCE_RANGES = ((1, 188), (349, 430))
+
+@dataclass(frozen=True)
+class ReceptorState:
+    structure_id: str
+    native_ligand_component_id: str
+    drd2_sequence_ranges: tuple[tuple[int, int], ...]
+
+
+RECEPTOR_STATES = {
+    "6CM4": ReceptorState(
+        structure_id="6CM4",
+        native_ligand_component_id="8NU",
+        # 6CM4 has a T4 lysozyme insertion between these DRD2 segments.
+        drd2_sequence_ranges=((1, 188), (349, 430)),
+    ),
+    "9BS9": ReceptorState(
+        structure_id="9BS9",
+        native_ligand_component_id="7LD",
+        # The DRD2 construct follows a fused non-receptor segment in 9BS9.
+        drd2_sequence_ranges=((146, 588),),
+    ),
+}
 BOX_PADDING_ANGSTROM = 8.0
 EXHAUSTIVENESS = 8
 NUM_MODES = 9
+STATE_COMPARISON_SEED = 42
+STATE_COMPARISON_BOX_SIZE = (24.0, 24.0, 24.0)
+
+
+def get_receptor_state(structure_id: str) -> ReceptorState:
+    try:
+        return RECEPTOR_STATES[structure_id.upper()]
+    except KeyError as exc:
+        supported = ", ".join(sorted(RECEPTOR_STATES))
+        raise ValueError(
+            f"Unsupported receptor structure {structure_id!r}. "
+            f"Choose one of: {supported}."
+        ) from exc
 
 
 def require_dependencies() -> dict[str, str]:
@@ -97,12 +130,12 @@ def cif_values(cif: dict, key: str) -> list[str]:
     return list(value)
 
 
-def download_structure(path: Path) -> None:
+def download_structure(path: Path, structure_id: str) -> None:
     if path.exists():
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(
-        PDB_URL,
+        f"https://files.rcsb.org/download/{structure_id}.cif",
         headers={"User-Agent": "DRD2-Vina-docking/1.0"},
     )
     try:
@@ -110,19 +143,25 @@ def download_structure(path: Path) -> None:
             path.write_bytes(response.read())
     except (urllib.error.URLError, TimeoutError) as exc:
         raise RuntimeError(
-            f"Could not download DRD2 structure {PDB_ID} from RCSB PDB: {exc}"
+            f"Could not download DRD2 structure {structure_id} from RCSB PDB: {exc}"
         ) from exc
 
 
-def make_receptor_and_box(cif_path: Path, receptor_pdb: Path) -> tuple[list[float], list[float]]:
+def make_receptor_and_box(
+    cif_path: Path,
+    receptor_pdb: Path,
+    receptor_state: ReceptorState,
+) -> tuple[list[float], list[float]]:
     from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 
     cif = MMCIF2Dict(str(cif_path))
     component_ids = set(cif_values(cif, "_chem_comp.id"))
-    if RISPERIDONE_COMPONENT_ID not in component_ids:
+    ligand_component_id = receptor_state.native_ligand_component_id
+    if ligand_component_id not in component_ids:
         raise ValueError(
-            f"Expected risperidone component {RISPERIDONE_COMPONENT_ID} was not "
-            f"found in PDB {PDB_ID}; stopping rather than guessing a docking box."
+            f"Expected native ligand component {ligand_component_id} was not "
+            f"found in PDB {receptor_state.structure_id}; stopping rather than "
+            "guessing a docking box."
         )
 
     fields = {
@@ -169,8 +208,19 @@ def make_receptor_and_box(cif_path: Path, receptor_pdb: Path) -> tuple[list[floa
     }
 
     native_ligand_points: list[tuple[float, float, float]] = []
-    receptor_lines = ["REMARK DRD2 receptor prepared from RCSB PDB 6CM4\n"]
+    receptor_lines = [
+        f"REMARK DRD2 receptor prepared from RCSB PDB "
+        f"{receptor_state.structure_id}\n"
+    ]
     serial = 1
+    chain_index = -1
+    previous_residue_key = None
+    previous_sequence_number = None
+    previous_segment = None
+    previous_chain = ""
+    previous_residue_name = ""
+    previous_residue_id = 0
+    previous_insertion = " "
     for index in range(atom_count):
         record = atom_columns["record"][index]
         component = atom_columns["component"][index]
@@ -181,7 +231,7 @@ def make_receptor_and_box(cif_path: Path, receptor_pdb: Path) -> tuple[list[floa
 
         if (
             record == "HETATM"
-            and component == RISPERIDONE_COMPONENT_ID
+            and component == ligand_component_id
             and element != "H"
         ):
             native_ligand_points.append(point)
@@ -195,13 +245,42 @@ def make_receptor_and_box(cif_path: Path, receptor_pdb: Path) -> tuple[list[floa
         segment = next(
             (
                 segment_index
-                for segment_index, (start, end) in enumerate(DRD2_SEQUENCE_RANGES)
+                for segment_index, (start, end) in enumerate(
+                    receptor_state.drd2_sequence_ranges
+                )
                 if start <= sequence_number <= end
             ),
             None,
         )
         if segment is None:
             continue
+
+        residue_key = (
+            atom_columns["label_chain"][index],
+            atom_columns["sequence"][index],
+        )
+        if residue_key != previous_residue_key:
+            if previous_sequence_number is None or (
+                segment != previous_segment
+                or sequence_number != previous_sequence_number + 1
+            ):
+                if previous_sequence_number is not None:
+                    receptor_lines.append(
+                        f"TER   {serial:5d}      {previous_residue_name:>3s} "
+                        f"{previous_chain}{previous_residue_id:4d}"
+                        f"{previous_insertion:1s}\n"
+                    )
+                    serial += 1
+                chain_index += 1
+                if chain_index >= 26:
+                    raise ValueError(
+                        f"PDB {receptor_state.structure_id} has too many "
+                        "discontinuous DRD2 segments for PDB chain IDs."
+                    )
+            chain = chr(ord("A") + chain_index)
+            previous_residue_key = residue_key
+            previous_sequence_number = sequence_number
+            previous_segment = segment
 
         altloc = atom_columns["altloc"][index]
         if altloc not in (".", "?", " "):
@@ -216,7 +295,6 @@ def make_receptor_and_box(cif_path: Path, receptor_pdb: Path) -> tuple[list[floa
         insertion = atom_columns["insertion"][index]
         if insertion in (".", "?", " "):
             insertion = " "
-        chain = "A" if segment == 0 else "B"
         atom_name = atom_columns["atom"][index]
         atom_field = (
             f"{atom_name:<4s}"
@@ -224,6 +302,10 @@ def make_receptor_and_box(cif_path: Path, receptor_pdb: Path) -> tuple[list[floa
             else f" {atom_name:<3s}"
         )
         residue_name = component
+        previous_chain = chain
+        previous_residue_name = residue_name
+        previous_residue_id = residue_id
+        previous_insertion = insertion
         x, y, z = point
         occupancy = float(atom_columns["occupancy"][index])
         b_factor = float(atom_columns["b_factor"][index])
@@ -235,11 +317,23 @@ def make_receptor_and_box(cif_path: Path, receptor_pdb: Path) -> tuple[list[floa
         serial += 1
 
     if not native_ligand_points:
-        raise ValueError(f"No co-crystallized risperidone coordinates found in {PDB_ID}.")
+        raise ValueError(
+            f"No co-crystallized component {ligand_component_id} coordinates "
+            f"found in {receptor_state.structure_id}."
+        )
     if serial <= 2:
-        raise ValueError(f"No DRD2 protein atoms were extracted from PDB {PDB_ID}.")
+        raise ValueError(
+            f"No DRD2 protein atoms were extracted from PDB "
+            f"{receptor_state.structure_id}."
+        )
 
-    receptor_lines.extend(("TER\n", "END\n"))
+    receptor_lines.extend(
+        (
+            f"TER   {serial:5d}      {previous_residue_name:>3s} "
+            f"{previous_chain}{previous_residue_id:4d}{previous_insertion:1s}\n",
+            "END\n",
+        )
+    )
     receptor_pdb.parent.mkdir(parents=True, exist_ok=True)
     receptor_pdb.write_text("".join(receptor_lines), encoding="ascii")
 
@@ -254,7 +348,10 @@ def make_receptor_and_box(cif_path: Path, receptor_pdb: Path) -> tuple[list[floa
     if not all(math.isfinite(value) for value in center) or not all(
         math.isfinite(value) and value > 0 for value in size
     ):
-        raise ValueError("Could not calculate a valid docking box from native risperidone.")
+        raise ValueError(
+            f"Could not calculate a valid docking box from native ligand "
+            f"{ligand_component_id}."
+        )
     return center, size
 
 
@@ -285,14 +382,23 @@ def repair_missing_atoms(receptor_pdb: Path, repaired_pdb: Path) -> None:
         print(f"Corrected anomalous terminal oxygen geometry in {corrected} residue(s).")
 
 
-def prepare_shared_receptor(tools: dict[str, str]) -> tuple[list[float], list[float]]:
-    structure_path = SHARED_RECEPTOR_DIR / f"{PDB_ID}.cif"
-    receptor_pdb = SHARED_RECEPTOR_DIR / "drd2_clean.pdb"
-    repaired_receptor_pdb = SHARED_RECEPTOR_DIR / "drd2_repaired.pdb"
-    receptor_pdbqt = SHARED_RECEPTOR_DIR / "drd2.pdbqt"
+def prepare_shared_receptor(
+    tools: dict[str, str],
+    structure_id: str = PDB_ID,
+) -> tuple[list[float], list[float]]:
+    receptor_state = get_receptor_state(structure_id)
+    receptor_dir = ROOT / "docking" / "prepared" / receptor_state.structure_id
+    structure_path = receptor_dir / f"{receptor_state.structure_id}.cif"
+    receptor_pdb = receptor_dir / "drd2_clean.pdb"
+    repaired_receptor_pdb = receptor_dir / "drd2_repaired.pdb"
+    receptor_pdbqt = receptor_dir / "drd2.pdbqt"
 
-    download_structure(structure_path)
-    center, size = make_receptor_and_box(structure_path, receptor_pdb)
+    download_structure(structure_path, receptor_state.structure_id)
+    center, size = make_receptor_and_box(
+        structure_path,
+        receptor_pdb,
+        receptor_state,
+    )
     if all(path.is_file() for path in (repaired_receptor_pdb, receptor_pdbqt)):
         print(f"Reusing shared prepared receptor: {receptor_pdbqt}")
         return center, size
@@ -531,10 +637,15 @@ def run_preparation(command: list[str], label: str) -> None:
 
 
 def dock(receptor_pdbqt: Path, ligand_pdbqt: Path, output_path: Path,
-         log_path: Path, center: list[float], size: list[float]) -> float:
+         log_path: Path, center: list[float], size: list[float],
+         seed: int | None = None) -> float:
     from vina import Vina
 
-    vina = Vina(sf_name="vina", cpu=0)
+    vina = (
+        Vina(sf_name="vina", cpu=0)
+        if seed is None
+        else Vina(sf_name="vina", cpu=0, seed=seed)
+    )
     vina.set_receptor(str(receptor_pdbqt))
     vina.set_ligand_from_file(str(ligand_pdbqt))
     vina.compute_vina_maps(center=center, box_size=size)
@@ -620,6 +731,7 @@ def record_docking_result(
     ligand_source: Path,
     vina_score: float,
     metadata: dict[str, str] | None = None,
+    receptor_structure: str = PDB_ID,
 ) -> None:
     summary_fields = (
         "run_name",
@@ -632,6 +744,7 @@ def record_docking_result(
         "score_description",
         "timestamp_utc",
         "smiles",
+        "receptor_structure",
     )
     summary_path = DOCKING_SUMMARY_PATH
     summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -640,12 +753,15 @@ def record_docking_result(
     if summary_path.exists():
         with summary_path.open(encoding="utf-8-sig", newline="") as summary_file:
             reader = csv.DictReader(summary_file)
-            if reader.fieldnames != list(summary_fields):
+            legacy_fields = list(summary_fields[:-1])
+            if reader.fieldnames not in (list(summary_fields), legacy_fields):
                 raise ValueError(
                     f"Cannot update docking summary with unexpected columns: "
                     f"{summary_path}"
                 )
             existing_rows = list(reader)
+        for existing in existing_rows:
+            existing.setdefault("receptor_structure", PDB_ID)
 
     pose_path = run_dir / "docked_poses.pdbqt"
     pose_smiles = ""
@@ -665,6 +781,7 @@ def record_docking_result(
         "score_description": "AutoDock Vina score (approximate; not experimental affinity)",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "smiles": pose_smiles,
+        "receptor_structure": receptor_structure,
     }
     row.update(metadata or {})
     existing_rows = [
@@ -691,16 +808,20 @@ def dock_ligand(
     size: list[float],
     summary_metadata: dict[str, str] | None = None,
     run_dir: Path | None = None,
+    structure_id: str = PDB_ID,
+    seed: int | None = None,
 ) -> tuple[Path, float]:
+    receptor_state = get_receptor_state(structure_id)
+    receptor_dir = ROOT / "docking" / "prepared" / receptor_state.structure_id
     run_dir = run_dir or RUN_DIR / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
     for filename in (
-        f"{PDB_ID}.cif",
+        f"{receptor_state.structure_id}.cif",
         "drd2_clean.pdb",
         "drd2_repaired.pdb",
         "drd2.pdbqt",
     ):
-        shutil.copyfile(SHARED_RECEPTOR_DIR / filename, run_dir / filename)
+        shutil.copyfile(receptor_dir / filename, run_dir / filename)
 
     receptor_pdbqt = run_dir / "drd2.pdbqt"
     ligand_sdf = run_dir / "ligand_3d.sdf"
@@ -717,8 +838,22 @@ def dock_ligand(
         ],
         f"ligand {run_name}",
     )
-    score = dock(receptor_pdbqt, ligand_pdbqt, output_path, log_path, center, size)
-    record_docking_result(run_dir, ligand_source, score, summary_metadata)
+    score = dock(
+        receptor_pdbqt,
+        ligand_pdbqt,
+        output_path,
+        log_path,
+        center,
+        size,
+        seed,
+    )
+    record_docking_result(
+        run_dir,
+        ligand_source,
+        score,
+        summary_metadata,
+        receptor_state.structure_id,
+    )
     print(f"Docking poses: {output_path}")
     print(f"Vina log: {log_path}")
     return run_dir, score
@@ -729,9 +864,11 @@ def dock_top_predictions(
     count: int,
     tools: dict[str, str],
     output_dir: Path = RUN_DIR,
+    structure_id: str = PDB_ID,
 ) -> Path:
     candidates = load_top_predictions(csv_path, count)
-    center, size = prepare_shared_receptor(tools)
+    receptor_state = get_receptor_state(structure_id)
+    center, size = prepare_shared_receptor(tools, receptor_state.structure_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / f"top_{count}_docking_summary.csv"
     results = []
@@ -758,6 +895,7 @@ def dock_top_predictions(
                 "predicted_pIC50": candidate["predicted_pIC50"],
             },
             run_dir=run_dir,
+            structure_id=receptor_state.structure_id,
         )
         results.append(
             {
@@ -767,6 +905,7 @@ def dock_top_predictions(
                 "predicted_pIC50": candidate["predicted_pIC50"],
                 "vina_score_kcal_mol": vina_score,
                 "run_directory": str(run_dir.relative_to(ROOT)),
+                "receptor_structure": receptor_state.structure_id,
             }
         )
         with summary_path.open("w", encoding="utf-8", newline="") as output_file:
@@ -780,6 +919,262 @@ def dock_top_predictions(
         "estimates, not experimental binding measurements."
     )
     return summary_path
+
+
+def dock_ligand_across_states(
+    ligand_source: Path,
+    tools: dict[str, str],
+    output_dir: Path,
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "state_comparison_summary.csv"
+    results = []
+
+    for structure_id, receptor_state in RECEPTOR_STATES.items():
+        center, _ = prepare_shared_receptor(tools, structure_id)
+        size = list(STATE_COMPARISON_BOX_SIZE)
+        run_dir = output_dir / structure_id
+        _, vina_score = dock_ligand(
+            ligand_source,
+            f"{ligand_source.stem}_{structure_id}",
+            tools,
+            center,
+            size,
+            run_dir=run_dir,
+            structure_id=structure_id,
+            seed=STATE_COMPARISON_SEED,
+        )
+        results.append(
+            {
+                "receptor_structure": structure_id,
+                "random_seed": STATE_COMPARISON_SEED,
+                "native_ligand_component_id": (
+                    receptor_state.native_ligand_component_id
+                ),
+                "vina_score_kcal_mol": f"{vina_score:.3f}",
+                "run_directory": str(run_dir.relative_to(ROOT)),
+                "docking_box_center": ",".join(f"{value:.3f}" for value in center),
+                "docking_box_size": ",".join(f"{value:.3f}" for value in size),
+            }
+        )
+        with summary_path.open("w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=results[0].keys())
+            writer.writeheader()
+            writer.writerows(results)
+
+    print(f"Receptor-state comparison summary: {summary_path}")
+    print(
+        "Scores are approximate Vina estimates and do not measure agonist "
+        "efficacy or receptor activation."
+    )
+    return summary_path
+
+
+def load_ligand_batch(csv_path: Path) -> list[dict[str, str]]:
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"Ligand batch CSV not found: {csv_path}")
+    with csv_path.open(encoding="utf-8-sig", newline="") as input_file:
+        reader = csv.DictReader(input_file)
+        if reader.fieldnames is None or not {"compound_id", "smiles"}.issubset(
+            reader.fieldnames
+        ):
+            raise ValueError(
+                f"{csv_path} must contain 'compound_id' and 'smiles' columns."
+            )
+        candidates = []
+        compound_ids = set()
+        for row_number, row in enumerate(reader, start=2):
+            compound_id = (row.get("compound_id") or "").strip()
+            smiles = (row.get("smiles") or "").strip()
+            rank = (row.get("rank") or str(row_number - 1)).strip()
+            if not compound_id or not smiles:
+                raise ValueError(
+                    f"{csv_path}, row {row_number}: compound_id and smiles "
+                    "must be non-empty."
+                )
+            if compound_id in compound_ids:
+                raise ValueError(
+                    f"{csv_path}, row {row_number}: duplicate compound_id "
+                    f"{compound_id!r}."
+                )
+            try:
+                rank_number = int(rank)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{csv_path}, row {row_number}: rank must be an integer."
+                ) from exc
+            if rank_number < 1:
+                raise ValueError(
+                    f"{csv_path}, row {row_number}: rank must be positive."
+                )
+            compound_ids.add(compound_id)
+            candidates.append(
+                {
+                    "rank": str(rank_number),
+                    "compound_id": compound_id,
+                    "smiles": smiles,
+                }
+            )
+
+    candidates.sort(key=lambda candidate: int(candidate["rank"]))
+    if not candidates:
+        raise ValueError(f"{csv_path} does not contain any ligands.")
+    return candidates
+
+
+def write_state_comparison_dashboard(
+    output_dir: Path,
+    results: list[dict[str, str]],
+) -> Path:
+    def score_bar(score: str, css_class: str) -> str:
+        width = min(100.0, abs(float(score)) / 12.0 * 100)
+        return (
+            f'<div class="bar {css_class}"><span style="width:{width:.1f}%">'
+            f"</span></div><small>{html.escape(score)} kcal/mol</small>"
+        )
+
+    table_rows = []
+    for row in results:
+        smiles = html.escape(row["smiles"])
+        table_rows.append(
+            "<tr>"
+            f'<td>{html.escape(row["rank"])}</td>'
+            f'<td>{html.escape(row["compound_id"])}</td>'
+            f'<td><code>{smiles}</code></td>'
+            f'<td>{score_bar(row["vina_score_6CM4_kcal_mol"], "inactive")}</td>'
+            f'<td>{score_bar(row["vina_score_9BS9_kcal_mol"], "active")}</td>'
+            f'<td>{html.escape(row["delta_9BS9_minus_6CM4_kcal_mol"])}</td>'
+            f'<td><a href="{html.escape(row["run_directory_6CM4"], quote=True)}/visualization_3d.html">6CM4 pose</a><br>'
+            f'<a href="{html.escape(row["run_directory_9BS9"], quote=True)}/visualization_3d.html">9BS9 pose</a></td>'
+            "</tr>"
+        )
+
+    output_path = output_dir / "visual_summary.html"
+    output_path.write_text(
+        """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DRD2 highest-potential ligand comparison</title>
+<style>
+body{font:15px Segoe UI,Arial,sans-serif;margin:24px;background:#101820;color:#edf2f5}
+h1{font-size:24px}p{color:#bdc9d1;max-width:1000px;line-height:1.5}
+table{border-collapse:collapse;width:100%;background:#17232d}
+th,td{border:1px solid #40515d;padding:10px;text-align:left;vertical-align:top}
+th{position:sticky;top:0;background:#263b49}
+code{white-space:normal;overflow-wrap:anywhere;font-size:12px}
+a{color:#8ecbff}.bar{width:150px;height:8px;background:#34444f;margin:4px 0;border-radius:5px}
+.bar span{display:block;height:100%;background:#67a9e8;border-radius:5px}
+.bar.active span{background:#d5aa55}small{color:#c6d1d8}
+.note{font-size:13px}
+</style>
+</head>
+<body>
+<h1>DRD2 highest-potential ligand comparison</h1>
+<p>These five compounds are shown in the supplied order (rank is user-provided,
+not an ML score). Vina scores are approximate docking estimates, not measured
+binding affinities or agonist efficacy. Lower (more negative) is the more
+favorable score within this scoring function. Each pose link opens the
+interactive visualization for that receptor state.</p>
+<p class="note">Comparisons use a 24 Å box, the same Vina search settings and
+random seed, with each box centered on the receptor's native ligand position.
+The different receptor conformations and ligand-centered boxes still limit
+direct state-to-state interpretation.</p>
+<table>
+<thead><tr><th>Input rank</th><th>Hit</th><th>SMILES</th>
+<th>Inactive 6CM4</th><th>Active 9BS9</th>
+<th>9BS9 − 6CM4 (kcal/mol)</th><th>Interactive poses</th></tr></thead>
+<tbody>"""
+        + "\n".join(table_rows)
+        + """</tbody>
+</table>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+    return output_path
+
+
+def dock_ligand_batch_across_states(
+    csv_path: Path,
+    tools: dict[str, str],
+    output_dir: Path,
+) -> tuple[Path, Path]:
+    candidates = load_ligand_batch(csv_path)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "state_comparison_summary.csv"
+    summary_results = []
+
+    for candidate in candidates:
+        safe_id = re.sub(
+            r"[^A-Za-z0-9._-]+",
+            "_",
+            candidate["compound_id"],
+        ).strip("._")
+        if not safe_id:
+            raise ValueError(
+                f"Compound ID {candidate['compound_id']!r} cannot be used "
+                "to name an output folder."
+            )
+        hit_dir = output_dir / f"{int(candidate['rank']):02d}_{safe_id}"
+        hit_dir.mkdir(parents=True, exist_ok=True)
+        ligand_source = hit_dir / "candidate.smi"
+        ligand_source.write_text(candidate["smiles"] + "\n", encoding="utf-8")
+        scores = {}
+        run_directories = {}
+
+        for structure_id, receptor_state in RECEPTOR_STATES.items():
+            center, _ = prepare_shared_receptor(tools, structure_id)
+            run_dir = hit_dir / structure_id
+            _, vina_score = dock_ligand(
+                ligand_source,
+                f"{safe_id}_{structure_id}",
+                tools,
+                center,
+                list(STATE_COMPARISON_BOX_SIZE),
+                {"compound_id": candidate["compound_id"]},
+                run_dir=run_dir,
+                structure_id=structure_id,
+                seed=STATE_COMPARISON_SEED,
+            )
+            scores[structure_id] = vina_score
+            run_directories[structure_id] = str(run_dir.relative_to(output_dir))
+            from docking.visualize_docking_3d import build_html
+
+            (run_dir / "visualization_3d.html").write_text(
+                build_html(run_dir),
+                encoding="utf-8",
+            )
+
+        row = {
+            "rank": candidate["rank"],
+            "compound_id": candidate["compound_id"],
+            "smiles": candidate["smiles"],
+            "vina_score_6CM4_kcal_mol": f"{scores['6CM4']:.3f}",
+            "vina_score_9BS9_kcal_mol": f"{scores['9BS9']:.3f}",
+            "delta_9BS9_minus_6CM4_kcal_mol": (
+                f"{scores['9BS9'] - scores['6CM4']:.3f}"
+            ),
+            "run_directory_6CM4": run_directories["6CM4"],
+            "run_directory_9BS9": run_directories["9BS9"],
+        }
+        summary_results.append(row)
+        with summary_path.open("w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=row.keys())
+            writer.writeheader()
+            writer.writerows(summary_results)
+        write_state_comparison_dashboard(output_dir, summary_results)
+
+    dashboard_path = write_state_comparison_dashboard(output_dir, summary_results)
+    print(f"State comparison summary: {summary_path}")
+    print(f"Visual summary: {dashboard_path}")
+    print(
+        "Vina scores are approximate docking estimates, not binding affinities "
+        "or measures of agonist efficacy."
+    )
+    return summary_path, dashboard_path
 
 
 def main() -> int:
@@ -806,19 +1201,72 @@ def main() -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=RUN_DIR,
-        help=f"directory for top-prediction runs and summary (default: {RUN_DIR})",
+        help=(
+            "directory for batch/comparison outputs (default: docking/runs for "
+            "6CM4 predictions; structure-specific directory otherwise)"
+        ),
+    )
+    parser.add_argument(
+        "--structure",
+        choices=sorted(RECEPTOR_STATES),
+        default=PDB_ID,
+        help="DRD2 receptor structure to dock against (default: 6CM4)",
+    )
+    parser.add_argument(
+        "--compare-states",
+        action="store_true",
+        help=(
+            "dock one supplied ligand against both 6CM4 and active-state 9BS9 "
+            "and write a comparison summary"
+        ),
+    )
+    parser.add_argument(
+        "--compare-state-batch-csv",
+        type=Path,
+        help=(
+            "CSV containing compound_id and smiles columns; dock each listed "
+            "ligand against 6CM4 and 9BS9 and generate pose visualizations"
+        ),
     )
     args = parser.parse_args()
 
     try:
+        if args.compare_state_batch_csv and (
+            args.top_predictions or args.compare_states
+        ):
+            raise ValueError(
+                "--compare-state-batch-csv cannot be combined with "
+                "--top-predictions or --compare-states."
+            )
+        if args.top_predictions and args.compare_states:
+            raise ValueError(
+                "--top-predictions and --compare-states cannot be combined."
+            )
         tools = require_dependencies()
-        if args.top_predictions:
+        if args.compare_state_batch_csv:
+            output_dir = (
+                args.output_dir.expanduser().resolve()
+                if args.output_dir is not None
+                else args.compare_state_batch_csv.expanduser().resolve().parent
+            )
+            dock_ligand_batch_across_states(
+                args.compare_state_batch_csv.expanduser().resolve(),
+                tools,
+                output_dir,
+            )
+        elif args.top_predictions:
+            if args.output_dir is not None:
+                output_dir = args.output_dir.expanduser().resolve()
+            elif args.structure == PDB_ID:
+                output_dir = RUN_DIR
+            else:
+                output_dir = RUN_DIR / args.structure
             dock_top_predictions(
                 args.predictions_csv.expanduser().resolve(),
                 args.top,
                 tools,
-                args.output_dir.expanduser().resolve(),
+                output_dir,
+                args.structure,
             )
         else:
             raw_path = input(
@@ -830,9 +1278,29 @@ def main() -> int:
             if not ligand_source.is_file():
                 raise FileNotFoundError(f"Ligand file not found: {ligand_source}")
 
-            center, size = prepare_shared_receptor(tools)
+            if args.compare_states:
+                output_dir = (
+                    args.output_dir.expanduser().resolve()
+                    if args.output_dir is not None
+                    else RUN_DIR / "state_comparisons" / ligand_source.stem
+                )
+                dock_ligand_across_states(ligand_source, tools, output_dir)
+                return 0
+
+            center, size = prepare_shared_receptor(tools, args.structure)
+            run_dir = (
+                RUN_DIR / f"{ligand_source.stem}_{args.structure}"
+                if args.structure != PDB_ID
+                else RUN_DIR / ligand_source.stem
+            )
             run_dir, _ = dock_ligand(
-                ligand_source, ligand_source.stem, tools, center, size
+                ligand_source,
+                run_dir.name,
+                tools,
+                center,
+                size,
+                run_dir=run_dir,
+                structure_id=args.structure,
             )
             print(
                 "Note: this is a docking score, not an experimental binding affinity. "

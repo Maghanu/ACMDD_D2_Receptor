@@ -56,12 +56,10 @@ otherwise unprioritized compound is a DRD2 hit.
    measurements determine whether a candidate is active and provide new
    evidence for later model improvement.
 
-The current scripts implement docking of **one supplied ligand per run**.
-They do not yet read ML predictions, screen a SMILES library, or automatically
-combine ML and docking rankings. The user must select a candidate and provide
-its structure file manually. Example SMILES under `docking/examples/drd2/` are
-for workflow testing; their presence does not establish experimental DRD2
-activity.
+The scripts dock one supplied ligand at a time or process selected predicted
+SMILES as a batch. They do not automatically combine ML and docking rankings.
+Example SMILES under `docking/examples/drd2/` are for workflow testing; their
+presence does not establish experimental DRD2 activity.
 
 ## Scope and limitations
 
@@ -70,9 +68,14 @@ activity.
   contributions to binding, and the receptor is rigid in this workflow. Use
   scores for pose generation and cautious relative triage under a consistent
   protocol, not as calibrated experimental affinities.
-- The workflow uses the DRD2 conformation in PDB 6CM4, an X-ray structure with
-  co-crystallized risperidone. A single receptor conformation cannot represent
-  all receptor states or conformational flexibility.
+- By default, the workflow uses PDB 6CM4, an X-ray DRD2 structure with
+  co-crystallized risperidone. It can also use PDB 9BS9, an active-state DRD2
+  cryo-EM structure with co-crystallized LSD (component 7LD) and mini-GoA
+  context. For 9BS9, the prepared receptor contains the DRD2 sequence
+  (mmCIF sequence positions 146–588); the fused non-receptor construct and
+  co-crystallized LSD are not included as receptor atoms. A single receptor
+  conformation cannot represent all receptor states or conformational
+  flexibility.
 - Ligand protonation, tautomerism, stereochemistry, salt removal, and
   coordinate generation affect preparation and can affect the result. Check
   these explicitly for each candidate.
@@ -134,19 +137,57 @@ python Workflow_steps/Workflow_step7_vina_autodock.py
 ```
 
 When prompted, enter a path such as
-`docking/examples/drd2/ligand.smi`. The script downloads RCSB PDB 6CM4,
-derives the docking box from co-crystallized risperidone, repairs and
+`docking/examples/drd2/ligand.smi`. By default, the script downloads RCSB PDB
+6CM4, derives the docking box from co-crystallized risperidone, repairs and
 minimizes the receptor, prepares the ligand, and runs Vina.
 
 The prepared DRD2 receptor and docking box are cached in
-`docking/prepared/6CM4/` and reused for every ligand. Per-ligand run folders
-receive copies of the shared receptor files, allowing candidates to be
-compared against identical receptor coordinates and box settings. Remove that
-cache only when deliberately rebuilding the shared receptor; after doing so,
-redock all candidates being compared. This controls receptor preparation
-between candidates, but does not remove uncertainty from ligand preparation
-or Vina's search. Consider repeated runs or a more systematic protocol when
-ranking close candidates.
+`docking/prepared/<PDB-ID>/` and reused for every ligand. Per-ligand run
+folders receive copies of the shared receptor files, allowing candidates for a
+given structure to be compared against identical receptor coordinates and box
+settings. Remove a cache only when deliberately rebuilding that receptor;
+after doing so, redock all candidates being compared. This controls receptor
+preparation within a state, but does not remove uncertainty from ligand
+preparation or Vina's search. Consider repeated runs or a more systematic
+protocol when ranking close candidates.
+
+Choose the active-state receptor for an individual ligand with:
+
+```bash
+python Workflow_steps/Workflow_step7_vina_autodock.py --structure 9BS9
+```
+
+This writes the run separately under `docking/runs/<ligand>_9BS9/`. Its
+docking box is centered on the co-crystallized 7LD ligand. For a paired
+comparison of one input ligand, use:
+
+```bash
+python Workflow_steps/Workflow_step7_vina_autodock.py --compare-states
+```
+
+Enter the ligand path when prompted. Both 6CM4 and 9BS9 are prepared and
+docked with the same 24 Å cubic box, Vina search settings, and random seed;
+each box is centered on that receptor's native ligand position. Poses, logs,
+and receptor copies are stored under
+`docking/runs/state_comparisons/<ligand>/`, with the
+`state_comparison_summary.csv` alongside them. Predicted-pIC50 batches can
+also be docked to 9BS9 using `--top-predictions --structure 9BS9`.
+
+For the generated Zinc screen, the top 100 can be docked to the default
+6CM4 receptor into a separate results folder with:
+
+```bash
+python Workflow_steps/Workflow_step7_vina_autodock.py --top-predictions --predictions-csv results/random_smiles_predicted_pic50.csv --top 100 --output-dir results/random_smiles_top100_docking
+```
+
+Vina estimates pose/interaction energy, not agonist efficacy or receptor
+activation. Although 9BS9 is an active-state structure, a better dopamine
+score there is not guaranteed and would not demonstrate that dopamine
+activates DRD2. The 6CM4 and 9BS9 boxes are centered using their own native
+ligands, so compare matched-ligand scores as a computational hypothesis, not
+a definitive affinity difference. The shared seed makes a paired run
+reproducible but does not measure search variability; repeat runs and validate
+activity with functional experiments.
 
 Salt inputs with exactly one carbon-containing component have disconnected
 non-carbon ions removed with a warning. Multiple carbon-containing components
@@ -166,7 +207,8 @@ input file, docked SMILES when available, optional prediction metadata, the
 best Vina score in the explicitly named `vina_score_kcal_mol` column, and a
 UTC timestamp. The score description in each row clarifies that this is an
 approximate Vina score, not an experimental affinity. Re-running a ligand
-updates that run's row rather than adding a duplicate.
+updates that run's row rather than adding a duplicate. The `receptor_structure`
+column identifies the PDB used for that run.
 
 ## Dock the top predicted-pIC50 candidates
 
@@ -191,7 +233,7 @@ may use `smiles` or `SMILES` and may identify candidates with `compound_id` or
 `zincid`.
 
 The batch summary records the prediction rank, compound ID, input SMILES,
-predicted pIC50, Vina score, and run directory.
+predicted pIC50, Vina score, receptor structure, and run directory.
 Each successful candidate run is also recorded in the shared
 `docking/runs/docking_summary.csv` file alongside results from single-ligand
 runs.

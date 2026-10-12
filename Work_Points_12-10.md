@@ -14,6 +14,3 @@ Things to work on at 12/10
     - Change files to juypter .ipynb to homogenize repository
 - Molecular Dynamics
     - Insilicobio
-
-- Flexible bond measurement vs fixed bonds
-- Asp114 most important residue reference??
